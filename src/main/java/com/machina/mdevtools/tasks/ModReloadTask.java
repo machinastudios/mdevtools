@@ -200,7 +200,7 @@ public class ModReloadTask extends Thread {
                 // Check if enough time has passed since detection
                 long timeSinceDetection = now - detectedAt;
                 if (timeSinceDetection < reloadDelayMs) {
-                    logger.debug(
+                    logger.trace(
                         "Mod %s not ready yet: %d ms since detection (need %d ms)", 
                         path.getFileName().toString(), timeSinceDetection, reloadDelayMs
                     );
