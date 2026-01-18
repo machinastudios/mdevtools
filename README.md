@@ -7,6 +7,15 @@ Development tools plugin for Hytale servers and modders that provides automated 
 - **Log Cleanup**: Automatically removes old log files on startup, keeping only the two most recent
 - **Mod Hot-Reload**: Automatically restarts the server when mod files (`.jar` or `.zip`) are updated in the `mods` directory
 
+## Installation
+
+1. Place the MDevTools JAR file in your server's `builtin` directory (not in the `mods` directory - this plugin must be explicitly placed in `builtin`)
+If you place it in the mods folder, things can get really wrong.
+2. Configure using `config.json5` as needed
+3. Restart the server
+
+The plugin will automatically start monitoring for mod changes and clean up logs on startup.
+
 ## Configuration
 
 ```json5
@@ -21,14 +30,6 @@ Development tools plugin for Hytale servers and modders that provides automated 
   }
 }
 ```
-
-## Installation
-
-1. Place the MDevTools JAR file in your server's `mods` directory
-2. Configure using `config.json5` as needed
-3. Restart the server
-
-The plugin will automatically start monitoring for mod changes and clean up logs on startup.
 
 ## Community
 

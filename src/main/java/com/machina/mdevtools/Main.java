@@ -9,7 +9,7 @@ import java.util.List;
 import javax.annotation.Nonnull;
 
 import com.hypixel.hytale.server.core.plugin.JavaPluginInit;
-
+import com.hypixel.hytale.server.core.plugin.PluginInit;
 import com.machina.mdevtools.tasks.ModReloadTask;
 import com.machina.shared.SuperPlugin;
 import com.machina.shared.config.PluginConfig;
@@ -24,6 +24,11 @@ public class Main extends SuperPlugin {
     public static Main INSTANCE;
 
     /**
+     * The plugin initialization
+     */
+    public static JavaPluginInit PLUGIN_INIT;
+
+    /**
      * The plugin configuration
      */
     public PluginConfig config = new PluginConfig(this, "config");
@@ -35,6 +40,7 @@ public class Main extends SuperPlugin {
 
     public Main(@Nonnull JavaPluginInit init) {
         super(init);
+        PLUGIN_INIT = init;
     }
 
     public void init() {

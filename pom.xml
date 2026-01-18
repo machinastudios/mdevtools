@@ -28,7 +28,7 @@
         <watch.postCommand>./marn run</watch.postCommand>
 
         <!-- Script to run after build -->
-        <script.postBuild>cp ${BUILD_ARTIFACT} ${HYTALE_MODS_DIR}/minterfacebuildertest.jar</script.postBuild>
+        <script.postBuild>cp ${BUILD_ARTIFACT} ${HYTALE_MODS_DIR}/mdevtools.jar</script.postBuild>
     </properties>
 
     <dependencies>
