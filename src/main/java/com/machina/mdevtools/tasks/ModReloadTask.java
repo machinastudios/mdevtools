@@ -451,10 +451,10 @@ public class ModReloadTask extends Thread {
                     // Add the plugin to the list
                     changedPlugins.add(new ChangedPlugin(pluginId, state));
 
-                    // Set the state to SETUP
-                    stateField.set(pluginBase, PluginState.SETUP);
+                    // Set the state to START
+                    stateField.set(pluginBase, PluginState.START);
 
-                    logger.debug("[%s] Dependency %s state set to SETUP", pluginName, dependency);
+                    logger.debug("[%s] Dependency %s state set to START", pluginName, dependency);
                 }
             }
 
@@ -463,12 +463,15 @@ public class ModReloadTask extends Thread {
 
             // If it doesn't exist, well, it's not supported by now
             if (existingPlugin == null) {
-                throw new Exception("Plugin " + pluginName + " isn't loaded, dynamically loading plugins/mods is not supported");
-            }
+                logger.info("Mod %s is not loaded yet, will be loaded", pluginName);
 
-            // Perform the reload
-            PluginManager.get().reload(PluginIdentifier.fromString(pluginName));
-            logger.info("Mod %s has been reloaded", pluginName);
+                // Load the plugin
+                PluginManager.get().load(PluginIdentifier.fromString(pluginName));
+            } else {
+                // Perform the reload
+                PluginManager.get().reload(PluginIdentifier.fromString(pluginName));
+                logger.info("Mod %s has been reloaded", pluginName);
+            }
 
             // Iterate over the changed plugins and set the state back
             for (ChangedPlugin changedPlugin : changedPlugins) {
