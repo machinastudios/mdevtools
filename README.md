@@ -1,6 +1,6 @@
-# MDevTools - Development Tools for Hytale Servers
+# MDevTools - Development tools for Hytale servers and modders
 
-Development tools plugin for Hytale servers that provides automated log cleanup and mod hot-reload capabilities.
+Development tools plugin for Hytale servers and modders that provides automated log cleanup and mod hot-reload capabilities.
 
 ## Features
 
