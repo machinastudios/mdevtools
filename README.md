@@ -5,7 +5,18 @@ Development tools plugin for Hytale servers and modders that provides automated 
 ## Features
 
 - **Log Cleanup**: Automatically removes old log files on startup, keeping only the two most recent
-- **Mod Hot-Reload**: Automatically restarts the server when mod files (`.jar` or `.zip`) are updated in the `mods` directory
+- **Mod Hot-Reload**: Automatically reloads mods when files (`.jar` or `.zip`) are updated in the `mods` or `builtin` directories, without requiring a full server restart
+
+### How Mod Hot-Reload Works
+
+The mod hot-reload feature monitors both the `mods` and `builtin` directories for changes to `.jar` or `.zip` files. When a change is detected:
+
+1. **Manifest Reading**: The plugin reads the `manifest.json` file from the modified mod to extract its identifier and dependencies
+2. **Dependency Handling**: It intelligently handles dependencies (`Dependencies` and `OptionalDependencies`) by temporarily adjusting plugin states to work around internal bugs in the plugin system
+3. **Plugin Reload**: The modified plugin is reloaded using the Hytale server's `PluginManager.reload()` method
+4. **State Restoration**: Any temporary changes made to dependency plugins are reverted, ensuring the plugin system remains consistent
+
+This allows developers to quickly test changes to their mods without restarting the entire server, significantly speeding up the development workflow.
 
 ## Installation
 
