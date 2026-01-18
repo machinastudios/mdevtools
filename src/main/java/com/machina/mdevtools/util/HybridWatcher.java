@@ -53,7 +53,7 @@ public class HybridWatcher {
 
         // Iterate over the roots and log them
         for (Path root : roots) {
-            logger.debug("Watching root: %s", root);
+            logger.trace("Watching root: %s", root);
         }
 
         initSnapshot();
@@ -71,7 +71,7 @@ public class HybridWatcher {
         for (Path root : roots) {
             // Skip if directory doesn't exist
             if (!Files.exists(root)) {
-                logger.debug("Skipping snapshot for root %s: directory does not exist", root);
+                logger.trace("Skipping snapshot for root %s: directory does not exist", root);
                 continue;
             }
             
@@ -82,7 +82,7 @@ public class HybridWatcher {
                       })
                       .count();
                 totalFiles += fileCount;
-                logger.debug("Snapshot initialized for root %s: %d files tracked", root, fileCount);
+                logger.trace("Snapshot initialized for root %s: %d files tracked", root, fileCount);
             } catch (IOException e) {
                 logger.warn("Failed to initialize snapshot for root %s: %s", root, e.getMessage());
             }
@@ -120,7 +120,7 @@ public class HybridWatcher {
             for (Path root : roots) {
                 // Skip if directory doesn't exist
                 if (!Files.exists(root)) {
-                    logger.debug("Skipping watch service registration for root %s: directory does not exist", root);
+                    logger.trace("Skipping watch service registration for root %s: directory does not exist", root);
                     continue;
                 }
                 
@@ -138,14 +138,14 @@ public class HybridWatcher {
                                         StandardWatchEventKinds.ENTRY_DELETE);
                                 dirCount.incrementAndGet();
 
-                                logger.debug("Registered watch for directory: %s", dir);
+                                logger.trace("Registered watch for directory: %s", dir);
                             } catch (IOException e) {
                                 logger.warn("Failed to register watch for directory %s: %t", dir, e);
                             }
                         });
 
                     totalDirs += dirCount.get();
-                    logger.debug("Registered %d directories for root %s", dirCount.get(), root);
+                    logger.trace("Registered %d directories for root %s", dirCount.get(), root);
                 } catch (IOException e) {
                     logger.warn("Failed to walk directories for root %s: %t", root, e);
                 }
@@ -185,18 +185,18 @@ public class HybridWatcher {
         
         // Skip test if directory doesn't exist
         if (!Files.exists(root)) {
-            logger.debug("Skipping watch service test for root %s: directory does not exist", root);
+            logger.trace("Skipping watch service test for root %s: directory does not exist", root);
             return false;
         }
         
         Path tmp = root.resolve(".ws-test-" + UUID.randomUUID());
-        logger.debug("Starting watch service test with temporary file: %s", tmp);
+        logger.trace("Starting watch service test with temporary file: %s", tmp);
 
         try {
             Files.writeString(tmp, "x");
-            logger.debug("Test file created: %s", tmp);
+            logger.trace("Test file created: %s", tmp);
         } catch (Exception e) {
-            logger.debug("Failed to create test file for watch service test: %t", e);
+            logger.trace("Failed to create test file for watch service test: %t", e);
             // Well, we can't write to the file, so we can assume the watch service is working
             // and fallback for polling
             return false;
@@ -211,15 +211,15 @@ public class HybridWatcher {
 
             // If the watch key is not null, the watch service is working
             if (k != null) {
-                logger.debug("Watch service detected test file event");
+                logger.trace("Watch service detected test file event");
                 k.pollEvents();
                 k.reset();
 
                 try {
                     Files.deleteIfExists(tmp);
-                    logger.debug("Test file deleted: %s", tmp);
+                    logger.trace("Test file deleted: %s", tmp);
                 } catch (Exception e) {
-                    logger.debug("Failed to delete test file: %t", e);
+                    logger.trace("Failed to delete test file: %t", e);
                 }
 
                 // Return true
@@ -238,11 +238,11 @@ public class HybridWatcher {
         try {
             Files.deleteIfExists(tmp);
         } catch (Exception e) {
-            logger.debug("Failed to delete test file after timeout: %t", e);
+            logger.trace("Failed to delete test file after timeout: %t", e);
         }
 
         long elapsed = System.currentTimeMillis() - start;
-        logger.debug("Watch service test timed out after %dms", elapsed);
+        logger.trace("Watch service test timed out after %dms", elapsed);
         // Return false
         return false;
     }
@@ -253,10 +253,10 @@ public class HybridWatcher {
      */
     public List<Entry> poll() {
         List<Entry> out = new ArrayList<>();
-        logger.debug("Polling hybrid watcher");
+        logger.trace("Polling hybrid watcher");
 
         if (wsWorking) {
-            logger.debug("Polling watch service");
+            logger.trace("Polling watch service");
             int beforeSize = out.size();
             pollWatchService(out);
             int watchServiceEvents = out.size() - beforeSize;
@@ -264,12 +264,12 @@ public class HybridWatcher {
                 logger.debug("Watch service detected %d event(s)", watchServiceEvents);
             }
         } else {
-            logger.debug("Watch service not available, skipping watch service poll");
+            logger.trace("Watch service not available, skipping watch service poll");
         }
 
         long now = System.currentTimeMillis();
         if (now - lastPoll >= interval.toMillis()) {
-            logger.debug("Polling filesystem (interval reached: %dms)", now - lastPoll);
+            logger.trace("Polling filesystem (interval reached: %dms)", now - lastPoll);
             int beforeSize = out.size();
             pollFilesystem(out);
             int filesystemEvents = out.size() - beforeSize;
@@ -281,7 +281,7 @@ public class HybridWatcher {
             lastPoll = now;
         } else {
             long remaining = interval.toMillis() - (now - lastPoll);
-            logger.debug("Filesystem poll skipped, %dms remaining until next poll", remaining);
+            logger.trace("Filesystem poll skipped, %dms remaining until next poll", remaining);
         }
 
         if (!out.isEmpty()) {
@@ -305,7 +305,7 @@ public class HybridWatcher {
             keyCount++;
             // Get the directory
             Path dir = (Path) key.watchable();
-            logger.debug("Processing watch key from directory: %s", dir);
+            logger.trace("Processing watch key from directory: %s", dir);
 
             // Iterate over the events
             int eventCount = 0;
@@ -317,28 +317,28 @@ public class HybridWatcher {
                 // Get the path of the event
                 Path p = dir.resolve((Path) ev.context());
 
-                logger.debug("Watch service event: %s - %s", k, p);
+                logger.trace("Watch service event: %s - %s", k, p);
 
                 // It's a create event
                 if (k == StandardWatchEventKinds.ENTRY_CREATE) {	
                     out.add(new Entry(p, EventType.CREATED));
-                    logger.debug("Added CREATED event: %s", p);
+                    logger.trace("Added CREATED event: %s", p);
                 } else
                 // It's a modify event
                 if (k == StandardWatchEventKinds.ENTRY_MODIFY) {
                     out.add(new Entry(p, EventType.MODIFIED));
-                    logger.debug("Added MODIFIED event: %s", p);
+                    logger.trace("Added MODIFIED event: %s", p);
                 } else
                 // It's a delete event
                 if (k == StandardWatchEventKinds.ENTRY_DELETE) {
                     out.add(new Entry(p, EventType.DELETED));
-                    logger.debug("Added DELETED event: %s", p);
+                    logger.trace("Added DELETED event: %s", p);
                 } else {
-                    logger.debug("Unhandled watch event kind: %s for %s", k, p);
+                    logger.trace("Unhandled watch event kind: %s for %s", k, p);
                 }
             }
 
-            logger.debug("Processed %d event(s) from watch key", eventCount);
+            logger.trace("Processed %d event(s) from watch key", eventCount);
 
             boolean reset = key.reset();
             if (!reset) {
@@ -347,7 +347,7 @@ public class HybridWatcher {
         }
 
         if (keyCount > 0) {
-            logger.debug("Processed %d watch key(s)", keyCount);
+            logger.trace("Processed %d watch key(s)", keyCount);
         }
     }
 
@@ -356,14 +356,15 @@ public class HybridWatcher {
      * @param out The list of entries
      */
     private void pollFilesystem(List<Entry> out) {
-        logger.debug("Starting filesystem poll");
+        logger.trace("Starting filesystem poll");
+
         Set<Path> current = new HashSet<>();
         int totalFilesScanned = 0;
 
         for (Path root : roots) {
             // Skip if directory doesn't exist
             if (!Files.exists(root)) {
-                logger.debug("Skipping filesystem poll for root %s: directory does not exist", root);
+                logger.trace("Skipping filesystem poll for root %s: directory does not exist", root);
                 continue;
             }
             
@@ -372,13 +373,13 @@ public class HybridWatcher {
                         .peek(current::add)
                         .count();
                 totalFilesScanned += fileCount;
-                logger.debug("Scanned %d files from root: %s", fileCount, root);
+                logger.trace("Scanned %d files from root: %s", fileCount, root);
             } catch (IOException e) {
-                logger.warn("Failed to walk filesystem for root %s: %s", root, e.getMessage());
+                logger.warn("Failed to walk filesystem for root %s: %t", root, e);
             }
         }
 
-        logger.debug("Total files scanned: %d, currently tracking: %d", totalFilesScanned, lastModified.size());
+        logger.trace("Total files scanned: %d, currently tracking: %d", totalFilesScanned, lastModified.size());
 
         int deletedCount = 0;
         for (Path old : Set.copyOf(lastModified.keySet())) {
@@ -386,7 +387,7 @@ public class HybridWatcher {
                 out.add(new Entry(old, EventType.DELETED));
                 lastModified.remove(old);
                 deletedCount++;
-                logger.debug("File deleted: %s", old);
+                logger.trace("File deleted: %s", old);
             }
         }
 
@@ -404,13 +405,15 @@ public class HybridWatcher {
             if (prev == null) {
                 out.add(new Entry(p, EventType.CREATED));
                 createdCount++;
-                logger.debug("File created: %s", p);
+
+                logger.trace("File created: %s", p);
             } else
             // If the modification time is greater than the previous modification time, it's a modify event
             if (mod > prev) {
                 out.add(new Entry(p, EventType.MODIFIED));
                 modifiedCount++;
-                logger.debug("File modified: %s (prev: %d, new: %d)", p, prev, mod);
+
+                logger.trace("File modified: %s (prev: %d, new: %d)", p, prev, mod);
             }
 
             lastModified.put(p, mod);
@@ -419,11 +422,12 @@ public class HybridWatcher {
         if (createdCount > 0) {
             logger.debug("Detected %d created file(s)", createdCount);
         }
+
         if (modifiedCount > 0) {
             logger.debug("Detected %d modified file(s)", modifiedCount);
         }
 
-        logger.debug("Filesystem poll completed. Now tracking %d files", lastModified.size());
+        logger.trace("Filesystem poll completed. Now tracking %d files", lastModified.size());
     }
 
     /**

@@ -7,6 +7,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.lang.reflect.Field;
+import java.nio.file.Files;
 import java.nio.file.FileSystems;
 import java.nio.file.Path;
 import java.nio.file.StandardWatchEventKinds;
@@ -16,10 +17,8 @@ import java.nio.file.WatchService;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
@@ -40,27 +39,85 @@ import com.machina.shared.util.ModJarUtils;
 
 public class ModReloadTask extends Thread {
     /**
+     * Record representing a pending mod that is waiting to be reloaded
+     * @param path The path to the mod file
+     * @param detectedAt Timestamp when the file change was first detected
+     */
+    private record PendingMod(Path path, long detectedAt) {}
+
+    /**
+     * Record representing a plugin that had its state changed during reload
+     * @param pluginId The plugin identifier
+     * @param originalState The original plugin state (null if fake plugin was created)
+     */
+    private record ChangedPlugin(PluginIdentifier pluginId, PluginState originalState) {}
+
+    /**
      * Whether the task is running
      */
     private boolean running = true;
 
     /**
-     * List of pending plugins paths to reload
-     * This is used for polling
+     * Map of pending plugins waiting to be reloaded
+     * Key: Path to the mod file (for fast lookup)
+     * Value: PendingMod record with path and detection timestamp
      */
-    private Set<Path> pendingPlugins = new HashSet<>();
+    private Map<Path, PendingMod> pendingPlugins = new HashMap<>();
 
     /**
      * The logger for the task
      */
     private final ModLogger logger = ModLogger.forMod(Main.INSTANCE, "ModReloadTask");
 
+    /**
+     * Delay in milliseconds before reloading a mod after it's detected
+     */
+    private long reloadDelayMs;
+
+    /**
+     * Time in milliseconds to wait checking if file size is stable before reloading
+     */
+    private long fileStabilityCheckMs;
+    
+    /**
+     * Whether configuration has been initialized
+     */
+    private boolean configInitialized = false;
+
     public ModReloadTask() {
         super("Mod Reload Task");
+        
+        // Load configuration values (will be set in first run() iteration if needed)
+        this.reloadDelayMs = 1000; // Default value, will be overridden in run()
+        this.fileStabilityCheckMs = 500; // Default value, will be overridden in run()
+    }
+    
+    /**
+     * Initialize configuration values from Main.INSTANCE.config
+     */
+    private void initConfig() {
+        if (!configInitialized && Main.INSTANCE != null && Main.INSTANCE.config != null) {
+            try {
+                reloadDelayMs = Main.INSTANCE.config.getLong("mods.reloadDelayMs", 1000);
+                fileStabilityCheckMs = Main.INSTANCE.config.getLong("mods.fileStabilityCheckMs", 500);
+                
+                configInitialized = true;
+                logger.debug(
+                    "ModReloadTask config loaded: reloadDelayMs=%d, fileStabilityCheckMs=%d", 
+                    reloadDelayMs,
+                    fileStabilityCheckMs
+                );
+            } catch (Exception e) {
+                logger.warn("Failed to load config: %t", e);
+            }
+        }
     }
 
     @Override
     public void run() {
+        // Initialize configuration
+        initConfig();
+        
         // Watch for .zip and .jar files in the `mods` and `builtin` directories
         Path modsPath = new File("mods").toPath();
         Path builtinPath = new File("builtin").toPath();
@@ -69,6 +126,8 @@ public class ModReloadTask extends Thread {
         HybridWatcher hybridWatcher = new HybridWatcher(List.of(modsPath, builtinPath), Duration.ofMillis(300));
 
         while (running && !Thread.currentThread().isInterrupted()) {
+            // Re-initialize config in case it wasn't loaded yet
+            initConfig();
             // Get the next entry
             List<HybridWatcher.Entry> entries = hybridWatcher.poll();
 
@@ -92,22 +151,122 @@ public class ModReloadTask extends Thread {
 
                 logger.info("Mod %s has been changed, will be reloaded", path.getFileName().toString());
 
-                // Poll the file path
-                pendingPlugins.add(path);
+                // Add the file to pending list with current timestamp if not already present
+                long now = System.currentTimeMillis();
+                if (!pendingPlugins.containsKey(path)) {
+                    pendingPlugins.put(path, new PendingMod(path, now));
+
+                    logger.debug(
+                        "Added mod %s to pending list, waiting for delay and stability check", 
+                        path.getFileName().toString()
+                    );
+                } else {
+                    // File was already detected, update timestamp (file is still being written)
+                    pendingPlugins.put(path, new PendingMod(path, now));
+                    logger.debug(
+                        "Mod %s still being written, resetting wait timer", 
+                        path.getFileName().toString()
+                    );
+                }
             }
 
-            // Iterate over the pending plugins and reload them
-            for (Path path : pendingPlugins) {
+            // Iterate over the pending plugins and check if they're ready to reload
+            long now = System.currentTimeMillis();
+            List<Path> readyToReload = new ArrayList<>();
+            
+            for (PendingMod pendingMod : pendingPlugins.values()) {
+                Path path = pendingMod.path();
+                long detectedAt = pendingMod.detectedAt();
+                
+                // Check if enough time has passed since detection
+                long timeSinceDetection = now - detectedAt;
+                if (timeSinceDetection < reloadDelayMs) {
+                    logger.debug(
+                        "Mod %s not ready yet: %d ms since detection (need %d ms)", 
+                        path.getFileName().toString(), timeSinceDetection, reloadDelayMs
+                    );
+
+                    continue;
+                }
+                
+                // Check if file is stable (size hasn't changed)
+                if (!isFileStable(path)) {
+                    logger.debug(
+                        "Mod %s size is still changing, waiting for stability", 
+                        path.getFileName().toString()
+                    );
+
+                    continue;
+                }
+                
+                // File is ready to reload
+                readyToReload.add(path);
+            }
+
+            // Reload the ready plugins
+            for (Path path : readyToReload) {
                 try {
                     // Pay attention that this method can throw an exception or error
                     reloadMod(path);
                 } catch (Throwable e) {
                     logger.error("Exception reloading mod %s: %t", path.getFileName().toString(), e);
+                } finally {
+                    // Remove from pending list regardless of success/failure
+                    pendingPlugins.remove(path);
                 }
             }
+            
+            // Small sleep to avoid busy waiting
+            try {
+                Thread.sleep(100);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
+    }
 
-            // Clear the pending plugins
-            pendingPlugins.clear();
+    /**
+     * Check if a file is stable (size hasn't changed in the configured time)
+     * @param filePath The path to the file
+     * @return True if the file is stable, false otherwise
+     */
+    private boolean isFileStable(Path filePath) {
+        if (!Files.exists(filePath)) {
+            return false;
+        }
+        
+        try {
+            // Get initial file size
+            long initialSize = Files.size(filePath);
+            
+            // Wait for the stability check duration
+            Thread.sleep(fileStabilityCheckMs);
+            
+            // Check if file size changed
+            if (!Files.exists(filePath)) {
+                return false;
+            }
+            
+            long finalSize = Files.size(filePath);
+            boolean isStable = initialSize == finalSize;
+            
+            if (!isStable) {
+                logger.debug(
+                    "File %s size changed: %d -> %d bytes", 
+                    filePath.getFileName().toString(),
+                    initialSize,
+                    finalSize
+                );
+            }
+            
+            return isStable;
+        } catch (IOException e) {
+            logger.warn("Error checking file stability for %s: %t", filePath.getFileName().toString(), e);
+            return false;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return false;
         }
     }
 
@@ -141,8 +300,8 @@ public class ModReloadTask extends Thread {
             pluginsField.setAccessible(true);
             Map<PluginIdentifier, JavaPlugin> plugins = (Map<PluginIdentifier, JavaPlugin>) pluginsField.get(PluginManager.get());
 
-            // List of fake plugins to remove after reloading
-            Map<PluginIdentifier, PluginState> changedPlugins = new HashMap<>();
+            // List of plugins that had their state changed during reload
+            List<ChangedPlugin> changedPlugins = new ArrayList<>();
 
             // Iterate over the dependencies list and fake them
             for (String dependency : dependenciesNamesList) {
@@ -160,7 +319,7 @@ public class ModReloadTask extends Thread {
                     plugins.put(pluginId, (JavaPlugin) pluginBase);
 
                     // Add the fake plugin to the list (null means fake plugin was created)
-                    changedPlugins.put(pluginId, null);
+                    changedPlugins.add(new ChangedPlugin(pluginId, null));
 
                     logger.debug("Dependency %s fake plugin created", dependency);
                 } else {
@@ -170,7 +329,7 @@ public class ModReloadTask extends Thread {
                     PluginState state = (PluginState) stateField.get(pluginBase);
 
                     // Add the plugin to the list
-                    changedPlugins.put(pluginId, state);
+                    changedPlugins.add(new ChangedPlugin(pluginId, state));
 
                     // Set the state to SETUP
                     stateField.set(pluginBase, PluginState.SETUP);
@@ -185,17 +344,14 @@ public class ModReloadTask extends Thread {
             logger.info("Mod %s has been reloaded", pluginName);
 
             // Iterate over the changed plugins and set the state back
-            for (Map.Entry<PluginIdentifier, PluginState> entry : changedPlugins.entrySet()) {
-                // Get the plugin identifier
-                PluginIdentifier pluginId = entry.getKey();
+            for (ChangedPlugin changedPlugin : changedPlugins) {
+                PluginIdentifier pluginId = changedPlugin.pluginId();
+                PluginState originalState = changedPlugin.originalState();
 
-                // Get the state
-                PluginState state = entry.getValue();
-
-                logger.debug("Dependency %s state: %s", pluginId.toString(), state);
+                logger.debug("Dependency %s original state: %s", pluginId.toString(), originalState);
 
                 // If the state is null, it means the fake plugin was created
-                if (state == null) {
+                if (originalState == null) {
                     // Remove the fake plugin from the plugins map
                     plugins.remove(pluginId);
 
@@ -209,9 +365,9 @@ public class ModReloadTask extends Thread {
                 // Set the state back
                 Field stateField = PluginBase.class.getDeclaredField("state");
                 stateField.setAccessible(true);
-                stateField.set(pluginBase, state);
+                stateField.set(pluginBase, originalState);
 
-                logger.debug("Dependency %s state set back to %s", pluginId.toString(), state);
+                logger.debug("Dependency %s state set back to %s", pluginId.toString(), originalState);
             }
         } catch (Exception e) {
             logger.error("Exception reloading mod %s: %t", filePath.getFileName().toString(), e);
