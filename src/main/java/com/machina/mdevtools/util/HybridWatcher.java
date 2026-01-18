@@ -249,7 +249,7 @@ public class HybridWatcher {
 
     /**
      * Poll the hybrid watcher
-     * @return The list of entries
+     * @return The list of entries (deduplicated by path, keeping the most recent event type)
      */
     public List<Entry> poll() {
         List<Entry> out = new ArrayList<>();
@@ -284,14 +284,30 @@ public class HybridWatcher {
             logger.trace("Filesystem poll skipped, %dms remaining until next poll", remaining);
         }
 
-        if (!out.isEmpty()) {
-            logger.debug("Poll completed: %d total event(s) detected", out.size());
-            for (Entry entry : out) {
+        // Deduplicate entries by path - keep the most recent event type per path
+        // This prevents duplicate events when both WatchService and filesystem polling detect the same file
+        Map<Path, Entry> uniqueEntries = new HashMap<>();
+        for (Entry entry : out) {
+            Path normalizedPath = entry.path().toAbsolutePath().normalize();
+            // Keep the most recent entry for each path (later entries override earlier ones)
+            uniqueEntries.put(normalizedPath, new Entry(normalizedPath, entry.type()));
+        }
+        
+        // Convert back to list
+        List<Entry> deduplicatedOut = new ArrayList<>(uniqueEntries.values());
+
+        if (!deduplicatedOut.isEmpty()) {
+            int duplicatesRemoved = out.size() - deduplicatedOut.size();
+            if (duplicatesRemoved > 0) {
+                logger.debug("Removed %d duplicate event(s) from poll results", duplicatesRemoved);
+            }
+            logger.debug("Poll completed: %d unique event(s) detected", deduplicatedOut.size());
+            for (Entry entry : deduplicatedOut) {
                 logger.debug("Event: %s - %s", entry.type(), entry.path());
             }
         }
 
-        return out;
+        return deduplicatedOut;
     }
 
     /**
@@ -301,6 +317,7 @@ public class HybridWatcher {
     private void pollWatchService(List<Entry> out) {
         WatchKey key;
         int keyCount = 0;
+
         while ((key = ws.poll()) != null) {
             keyCount++;
             // Get the directory
@@ -319,22 +336,31 @@ public class HybridWatcher {
 
                 logger.trace("Watch service event: %s - %s", k, p);
 
+                // Normalize path for consistent comparison
+                Path normalizedPath = p.toAbsolutePath().normalize();
+
                 // It's a create event
                 if (k == StandardWatchEventKinds.ENTRY_CREATE) {	
-                    out.add(new Entry(p, EventType.CREATED));
-                    logger.trace("Added CREATED event: %s", p);
+                    out.add(new Entry(normalizedPath, EventType.CREATED));
+                    // Update lastModified to prevent filesystem polling from detecting it again
+                    lastModified.put(normalizedPath, getModTime(normalizedPath));
+                    logger.trace("Added CREATED event: %s", normalizedPath);
                 } else
                 // It's a modify event
                 if (k == StandardWatchEventKinds.ENTRY_MODIFY) {
-                    out.add(new Entry(p, EventType.MODIFIED));
-                    logger.trace("Added MODIFIED event: %s", p);
+                    out.add(new Entry(normalizedPath, EventType.MODIFIED));
+                    // Update lastModified to prevent filesystem polling from detecting it again
+                    lastModified.put(normalizedPath, getModTime(normalizedPath));
+                    logger.trace("Added MODIFIED event: %s", normalizedPath);
                 } else
                 // It's a delete event
                 if (k == StandardWatchEventKinds.ENTRY_DELETE) {
-                    out.add(new Entry(p, EventType.DELETED));
-                    logger.trace("Added DELETED event: %s", p);
+                    out.add(new Entry(normalizedPath, EventType.DELETED));
+                    // Remove from lastModified tracking
+                    lastModified.remove(normalizedPath);
+                    logger.trace("Added DELETED event: %s", normalizedPath);
                 } else {
-                    logger.trace("Unhandled watch event kind: %s for %s", k, p);
+                    logger.trace("Unhandled watch event kind: %s for %s", k, normalizedPath);
                 }
             }
 

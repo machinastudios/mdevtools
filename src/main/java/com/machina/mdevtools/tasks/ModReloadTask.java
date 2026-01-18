@@ -1,19 +1,10 @@
 package com.machina.mdevtools.tasks;
 
-import java.io.BufferedReader;
 import java.io.File;
-import java.io.FileInputStream;
 import java.io.IOException;
-import java.io.InputStream;
-import java.io.InputStreamReader;
 import java.lang.reflect.Field;
 import java.nio.file.Files;
-import java.nio.file.FileSystems;
 import java.nio.file.Path;
-import java.nio.file.StandardWatchEventKinds;
-import java.nio.file.WatchEvent;
-import java.nio.file.WatchKey;
-import java.nio.file.WatchService;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -21,39 +12,23 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipInputStream;
 
-import com.google.gson.Gson;
-import com.google.gson.JsonElement;
-import com.google.gson.JsonObject;
 import com.hypixel.hytale.common.plugin.PluginIdentifier;
 import com.hypixel.hytale.server.core.plugin.JavaPlugin;
-import com.hypixel.hytale.server.core.plugin.JavaPluginInit;
 import com.hypixel.hytale.server.core.plugin.PluginBase;
 import com.hypixel.hytale.server.core.plugin.PluginManager;
 import com.hypixel.hytale.server.core.plugin.PluginState;
 import com.machina.mdevtools.Main;
+import com.machina.mdevtools.tasks.modreload.FakeModulePlugin;
+import com.machina.mdevtools.tasks.modreload.PendingMod;
+import com.machina.mdevtools.tasks.modreload.ChangedPlugin;
+import com.machina.mdevtools.tasks.modreload.ModReloadResult;
 import com.machina.mdevtools.util.HybridWatcher;
 
 import com.machina.shared.factory.ModLogger;
 import com.machina.shared.util.ModJarUtils;
 
 public class ModReloadTask extends Thread {
-    /**
-     * Record representing a pending mod that is waiting to be reloaded
-     * @param path The path to the mod file
-     * @param detectedAt Timestamp when the file change was first detected
-     */
-    private record PendingMod(Path path, long detectedAt) {}
-
-    /**
-     * Record representing a plugin that had its state changed during reload
-     * @param pluginId The plugin identifier
-     * @param originalState The original plugin state (null if fake plugin was created)
-     */
-    private record ChangedPlugin(PluginIdentifier pluginId, PluginState originalState) {}
-
     /**
      * Whether the task is running
      */
@@ -65,6 +40,13 @@ public class ModReloadTask extends Thread {
      * Value: PendingMod record with path and detection timestamp
      */
     private Map<Path, PendingMod> pendingPlugins = new HashMap<>();
+    
+    /**
+     * Map tracking retry counts for each mod file
+     * Key: Normalized path to the mod file
+     * Value: Number of retry attempts made
+     */
+    private Map<Path, Integer> retryCounts = new HashMap<>();
     
     /**
      * Set of paths currently being processed to prevent duplicate reloads
@@ -87,6 +69,11 @@ public class ModReloadTask extends Thread {
     private long fileStabilityCheckMs;
     
     /**
+     * Maximum number of retry attempts for incomplete JARs
+     */
+    private static final int MAX_RETRIES = 5;
+    
+    /**
      * Whether configuration has been initialized
      */
     private boolean configInitialized = false;
@@ -107,7 +94,7 @@ public class ModReloadTask extends Thread {
             try {
                 reloadDelayMs = Main.INSTANCE.config.getLong("mods.reloadDelayMs", 1000);
                 fileStabilityCheckMs = Main.INSTANCE.config.getLong("mods.fileStabilityCheckMs", 500);
-                
+
                 configInitialized = true;
                 logger.debug(
                     "ModReloadTask config loaded: reloadDelayMs=%d, fileStabilityCheckMs=%d", 
@@ -160,8 +147,9 @@ public class ModReloadTask extends Thread {
                 if (entry.type() == HybridWatcher.EventType.DELETED) {
                     logger.info("File %s has been deleted, will not be reloaded", path.getFileName().toString());
 
-                    // Remove from pending if it was there
+                    // Remove from pending and retry tracking if it was there
                     pendingPlugins.remove(path);
+                    retryCounts.remove(path);
                     continue;
                 }
 
@@ -176,14 +164,12 @@ public class ModReloadTask extends Thread {
                     continue;
                 }
 
-                logger.info("Mod %s has been changed, will be reloaded", path.getFileName().toString());
-
                 // Normalize path to ensure consistent comparison
                 Path normalizedPath = path.toAbsolutePath().normalize();
 
                 // Add the file to pending list with current timestamp if not already present
                 long now = System.currentTimeMillis();
-                
+
                 // Check if already in pending (check both normalized and original paths)
                 Path existingKey = null;
                 for (Path key : pendingPlugins.keySet()) {
@@ -194,17 +180,20 @@ public class ModReloadTask extends Thread {
                 }
                 
                 if (existingKey == null) {
-                    // Not in pending, add it
-                    pendingPlugins.put(normalizedPath, new PendingMod(normalizedPath, now));
-                    logger.debug(
+                    // Not in pending, add it (reset retry count for new detections)
+                    pendingPlugins.put(normalizedPath, new PendingMod(normalizedPath, now, 0));
+                    retryCounts.remove(normalizedPath); // Reset retry count for new detection
+
+                    logger.info(
                         "Added mod %s to pending list, waiting for delay and stability check", 
                         path.getFileName().toString()
                     );
                 } else {
                     // File was already detected, update timestamp (file is still being written)
-                    // Remove old entry and add new one with normalized path
+                    // Remove old entry and add new one with normalized path, preserve retry count
+                    int currentRetryCount = retryCounts.getOrDefault(normalizedPath, 0);
                     pendingPlugins.remove(existingKey);
-                    pendingPlugins.put(normalizedPath, new PendingMod(normalizedPath, now));
+                    pendingPlugins.put(normalizedPath, new PendingMod(normalizedPath, now, currentRetryCount));
                     logger.debug(
                         "Mod %s still being written, resetting wait timer", 
                         path.getFileName().toString()
@@ -219,14 +208,14 @@ public class ModReloadTask extends Thread {
             // Create a copy of the pending plugins map to iterate safely while modifying
             for (PendingMod pendingMod : new ArrayList<>(pendingPlugins.values())) {
                 Path path = pendingMod.path();
-                
+
                 // Double-check the path is still in pending (might have been removed)
                 if (!pendingPlugins.containsKey(path)) {
                     continue;
                 }
                 
                 long detectedAt = pendingMod.detectedAt();
-                
+
                 // Check if enough time has passed since detection
                 long timeSinceDetection = now - detectedAt;
                 if (timeSinceDetection < reloadDelayMs) {
@@ -237,7 +226,7 @@ public class ModReloadTask extends Thread {
 
                     continue;
                 }
-                
+
                 // Check if file is stable (size hasn't changed)
                 if (!isFileStable(path)) {
                     logger.debug(
@@ -247,12 +236,21 @@ public class ModReloadTask extends Thread {
 
                     continue;
                 }
-                
+
                 // File is ready to reload - remove from pending FIRST to prevent duplicate processing
                 // This ensures that even if the loop runs again before processing, the file won't be added twice
-                if (pendingPlugins.remove(path) != null) {
+                PendingMod removedPending = pendingPlugins.remove(path);
+
+                // If the mod was removed from pending
+                if (removedPending != null) {
+                    // Preserve retry count in separate map before removal
+                    retryCounts.put(path, removedPending.retryCount());
                     readyToReload.add(path);
-                    logger.debug("Mod %s is ready to reload, added to ready list", path.getFileName().toString());
+
+                    logger.debug(
+                        "Mod %s is ready to reload, added to ready list (retry count: %d)", 
+                        path.getFileName().toString(), removedPending.retryCount()
+                    );
                 }
             }
 
@@ -271,15 +269,49 @@ public class ModReloadTask extends Thread {
                     processingPaths.add(normalizedPath);
                 }
                 
+                ModReloadResult result = null;
                 try {
                     // Pay attention that this method can throw an exception or error
-                    reloadMod(normalizedPath);
+                    result = reloadMod(normalizedPath);
                 } catch (Throwable e) {
                     logger.error("Exception reloading mod %s: %t", normalizedPath.getFileName().toString(), e);
+                    result = ModReloadResult.error(e.getMessage());
                 } finally {
                     // Remove from processing set when done
                     synchronized (processingPaths) {
                         processingPaths.remove(normalizedPath);
+                    }
+
+                    // If the mod should be retried (e.g., JAR is incomplete), add it back to pending
+                    if (result != null && result.shouldRetry()) {
+                        // Get current retry count from the retryCounts map
+                        int currentRetryCount = retryCounts.getOrDefault(normalizedPath, 0);
+                        int newRetryCount = currentRetryCount + 1;
+                        
+                        if (newRetryCount > MAX_RETRIES) {
+                            // Remove from retry tracking since we're giving up
+                            retryCounts.remove(normalizedPath);
+                            logger.warn("Mod %s exceeded maximum retry count (%d), giving up. Reason: %s",
+                                normalizedPath.getFileName().toString(),
+                                MAX_RETRIES,
+                                result.message() != null ? result.message() : "unknown reason"
+                            );
+                        } else {
+                            // Update retry count and add back to pending
+                            retryCounts.put(normalizedPath, newRetryCount);
+                            long retryTimestamp = System.currentTimeMillis();
+                            pendingPlugins.put(normalizedPath, new PendingMod(normalizedPath, retryTimestamp, newRetryCount));
+
+                            logger.debug("Mod %s added back to pending list for retry %d/%d after delay: %s", 
+                                normalizedPath.getFileName().toString(),
+                                newRetryCount,
+                                MAX_RETRIES,
+                                result.message() != null ? result.message() : "unknown reason"
+                            );
+                        }
+                    } else if (result != null && result.isSuccess()) {
+                        // Reload was successful, clear retry count
+                        retryCounts.remove(normalizedPath);
                     }
                 }
 
@@ -346,17 +378,22 @@ public class ModReloadTask extends Thread {
     /**
      * Reload a mod
      * @param filePath The path to the mod file
+     * @return The result of the reload operation
+     * @throws Exception if an error occurs during reload
      */
-    private synchronized void reloadMod(Path filePath) throws Exception {
+    private synchronized ModReloadResult reloadMod(Path filePath) throws Exception {
         logger.info("Reloading mod file %s", filePath.getFileName().toString());
 
         try {
             // Get the manifest of the mod
             ModJarUtils.ModManifest manifest = ModJarUtils.getModManifest(filePath);
 
-            // If the manifest is null, the mod is not a valid mod, skip
+            // If the manifest is null, the mod is not a valid mod or the JAR is still incomplete
             if (manifest == null) {
-                throw new Exception("Mod is not a valid mod, manifest.json file is missing or invalid");
+                String message = "manifest.json is missing or invalid, may be incomplete";
+                logger.warn("Mod %s %s - will retry after delay", filePath.getFileName().toString(), message);
+
+                return ModReloadResult.retryNeeded(message);
             }
 
             // Get the full plugin name
@@ -419,6 +456,10 @@ public class ModReloadTask extends Thread {
                 throw new Exception("Plugin " + pluginName + " isn't loaded, dynamically loading plugins/mods is not supported");
             }
 
+            // Perform the reload
+            PluginManager.get().reload(PluginIdentifier.fromString(pluginName));
+            logger.info("Mod %s has been reloaded", pluginName);
+
             // Iterate over the changed plugins and set the state back
             for (ChangedPlugin changedPlugin : changedPlugins) {
                 PluginIdentifier pluginId = changedPlugin.pluginId();
@@ -445,23 +486,12 @@ public class ModReloadTask extends Thread {
 
                 logger.debug("[%s] Dependency %s state set back to %s", pluginName, pluginId.toString(), originalState);
             }
+            
+            // Reload was successful
+            return ModReloadResult.success();
         } catch (Exception e) {
             // Don't log here - the exception will be logged in the run() method's catch block
             throw e;
         }
-    }
-}
-
-/**
- * Fake plugin to reload the plugin
- */
-class FakeModulePlugin extends JavaPlugin {
-    public FakeModulePlugin(JavaPluginInit init) {
-        super(init);
-    }
-
-    @Override
-    public PluginState getState() {
-        return PluginState.SETUP;
     }
 }
