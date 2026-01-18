@@ -1,0 +1,20 @@
+{
+  "Group": "com.machina",
+  "Name": "mdevtools",
+  "Version": "1.0.0",
+  "Description": "Development tools for Hytale servers",
+  "Main": "com.machina.mdevtools.Main",
+  "Authors": [
+    {
+      "Name": "Machina Studios",
+      "Email": "machina@hytalento.com",
+      "Url": "https://hytalento.com"
+    }
+  ],
+  "Website": "https://hytalento.com",
+  "ServerVersion": "*",
+  "OptionalDependencies": {},
+  "Dependencies": {},
+  "DisabledByDefault": false,
+  "IncludesAssetPack": false
+}
