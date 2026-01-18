@@ -130,6 +130,8 @@ public class ModReloadTask extends Thread {
             // This prevents processing the same mod multiple times if it generates multiple events
             // Use normalized absolute paths to ensure consistent comparison
             Map<Path, HybridWatcher.Entry> uniqueEntries = new HashMap<>();
+
+            // Iterate over the entries
             for (HybridWatcher.Entry entry : entries) {
                 // Get the path of the entry and normalize it to ensure consistent comparison
                 Path path = entry.path().toAbsolutePath().normalize();
@@ -182,7 +184,9 @@ public class ModReloadTask extends Thread {
                 if (existingKey == null) {
                     // Not in pending, add it (reset retry count for new detections)
                     pendingPlugins.put(normalizedPath, new PendingMod(normalizedPath, now, 0));
-                    retryCounts.remove(normalizedPath); // Reset retry count for new detection
+
+                    // Reset retry count for new detection
+                    retryCounts.remove(normalizedPath);
 
                     logger.info(
                         "Added mod %s to pending list, waiting for delay and stability check", 
@@ -194,6 +198,7 @@ public class ModReloadTask extends Thread {
                     int currentRetryCount = retryCounts.getOrDefault(normalizedPath, 0);
                     pendingPlugins.remove(existingKey);
                     pendingPlugins.put(normalizedPath, new PendingMod(normalizedPath, now, currentRetryCount));
+
                     logger.debug(
                         "Mod %s still being written, resetting wait timer", 
                         path.getFileName().toString()
@@ -214,10 +219,13 @@ public class ModReloadTask extends Thread {
                     continue;
                 }
                 
+                // Get the detected at timestamp
                 long detectedAt = pendingMod.detectedAt();
 
-                // Check if enough time has passed since detection
+                // Calculate the time since detection
                 long timeSinceDetection = now - detectedAt;
+
+                // If the time since detection is less than the reload delay
                 if (timeSinceDetection < reloadDelayMs) {
                     logger.trace(
                         "Mod %s not ready yet: %d ms since detection (need %d ms)", 
@@ -309,8 +317,10 @@ public class ModReloadTask extends Thread {
                                 result.message() != null ? result.message() : "unknown reason"
                             );
                         }
-                    } else if (result != null && result.isSuccess()) {
-                        // Reload was successful, clear retry count
+                    } else
+                    // If the reload was successful
+                    if (result != null && result.isSuccess()) {
+                        // Clear the retry count
                         retryCounts.remove(normalizedPath);
                     }
                 }
