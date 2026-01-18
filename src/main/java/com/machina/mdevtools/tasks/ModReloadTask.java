@@ -132,19 +132,30 @@ public class ModReloadTask extends Thread {
             // Get the next entries
             List<HybridWatcher.Entry> entries = hybridWatcher.poll();
 
-            // Iterate over the entries
+            // Deduplicate entries by path - keep only the most recent event per path
+            // This prevents processing the same mod multiple times if it generates multiple events
+            Map<Path, HybridWatcher.Entry> uniqueEntries = new HashMap<>();
             for (HybridWatcher.Entry entry : entries) {
+                // Get the path of the entry
+                Path path = entry.path();
+
+                // Keep the most recent entry for each path (later entries override earlier ones)
+                uniqueEntries.put(path, entry);
+            }
+
+            // Iterate over the deduplicated entries
+            for (HybridWatcher.Entry entry : uniqueEntries.values()) {
                 // Ignore `DELETED` events
                 if (entry.type() == HybridWatcher.EventType.DELETED) {
                     logger.info("File %s has been deleted, will not be reloaded", entry.path().getFileName().toString());
+
+                    // Remove from pending if it was there
+                    pendingPlugins.remove(entry.path());
                     continue;
                 }
 
                 // Get the path of the entry
                 Path path = entry.path();
-
-                // Get the type of the entry
-                HybridWatcher.EventType type = entry.type();
 
                 // Check if the file is a .zip or .jar file
                 boolean isZip = path.getFileName().toString().endsWith(".zip");
