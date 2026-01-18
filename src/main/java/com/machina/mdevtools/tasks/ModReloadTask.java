@@ -3,6 +3,7 @@ package com.machina.mdevtools.tasks;
 import java.io.File;
 import java.io.IOException;
 import java.lang.reflect.Field;
+import java.net.URLConnection;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -276,6 +277,23 @@ public class ModReloadTask extends Thread {
                     // Mark as processing
                     processingPaths.add(normalizedPath);
                 }
+
+                // Get the default use caches for the file and jar
+                boolean isFileUrlConnectionUseCaches = URLConnection.getDefaultUseCaches("file");
+                boolean isJarUrlConnectionUseCaches = URLConnection.getDefaultUseCaches("jar");
+
+                logger.info("isFileUrlConnectionUseCaches: %s", isFileUrlConnectionUseCaches);
+                logger.info("isJarUrlConnectionUseCaches: %s", isJarUrlConnectionUseCaches);
+
+                // Disable caching for the file
+                if (isFileUrlConnectionUseCaches) {
+                    URLConnection.setDefaultUseCaches("file", false);
+                }
+
+                // Disable caching for the jar
+                if (isJarUrlConnectionUseCaches) {
+                    URLConnection.setDefaultUseCaches("jar", false);
+                }
                 
                 ModReloadResult result = null;
                 try {
@@ -323,6 +341,15 @@ public class ModReloadTask extends Thread {
                         // Clear the retry count
                         retryCounts.remove(normalizedPath);
                     }
+                }
+
+                // Restore the default use caches for the file and jar
+                if (isFileUrlConnectionUseCaches) {
+                    URLConnection.setDefaultUseCaches("file", isFileUrlConnectionUseCaches);
+                }
+
+                if (isJarUrlConnectionUseCaches) {
+                    URLConnection.setDefaultUseCaches("jar", isJarUrlConnectionUseCaches);
                 }
 
                 /**
@@ -451,10 +478,10 @@ public class ModReloadTask extends Thread {
                     // Add the plugin to the list
                     changedPlugins.add(new ChangedPlugin(pluginId, state));
 
-                    // Set the state to START
-                    stateField.set(pluginBase, PluginState.START);
+                    // Set the state to SETUP
+                    stateField.set(pluginBase, PluginState.SETUP);
 
-                    logger.debug("[%s] Dependency %s state set to START", pluginName, dependency);
+                    logger.debug("[%s] Dependency %s state set to SETUP", pluginName, dependency);
                 }
             }
 
