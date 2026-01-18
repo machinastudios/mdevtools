@@ -128,10 +128,18 @@ public class ModReloadTask extends Thread {
         while (running && !Thread.currentThread().isInterrupted()) {
             // Re-initialize config in case it wasn't loaded yet
             initConfig();
-            // Get the next entry
+
+            // Get the next entries
             List<HybridWatcher.Entry> entries = hybridWatcher.poll();
 
+            // Iterate over the entries
             for (HybridWatcher.Entry entry : entries) {
+                // Ignore `DELETED` events
+                if (entry.type() == HybridWatcher.EventType.DELETED) {
+                    logger.info("File %s has been deleted, will not be reloaded", entry.path().getFileName().toString());
+                    continue;
+                }
+
                 // Get the path of the entry
                 Path path = entry.path();
 
