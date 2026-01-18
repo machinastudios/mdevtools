@@ -13,10 +13,13 @@ import java.nio.file.StandardWatchEventKinds;
 import java.nio.file.WatchEvent;
 import java.nio.file.WatchKey;
 import java.nio.file.WatchService;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
@@ -30,10 +33,27 @@ import com.hypixel.hytale.server.core.plugin.PluginBase;
 import com.hypixel.hytale.server.core.plugin.PluginManager;
 import com.hypixel.hytale.server.core.plugin.PluginState;
 import com.machina.mdevtools.Main;
+import com.machina.mdevtools.util.HybridWatcher;
 
+import com.machina.shared.factory.ModLogger;
+import com.machina.shared.util.ModJarUtils;
 
 public class ModReloadTask extends Thread {
+    /**
+     * Whether the task is running
+     */
     private boolean running = true;
+
+    /**
+     * List of pending plugins paths to reload
+     * This is used for polling
+     */
+    private Set<Path> pendingPlugins = new HashSet<>();
+
+    /**
+     * The logger for the task
+     */
+    private final ModLogger logger = ModLogger.forMod(Main.INSTANCE, "ModReloadTask");
 
     public ModReloadTask() {
         super("Mod Reload Task");
@@ -45,77 +65,49 @@ public class ModReloadTask extends Thread {
         Path modsPath = new File("mods").toPath();
         Path builtinPath = new File("builtin").toPath();
 
-        try {
-            // Create a watch service
-            WatchService watchService = FileSystems.getDefault().newWatchService();
+        // Create a hybrid watcher for the `mods` and `builtin` directories
+        HybridWatcher hybridWatcher = new HybridWatcher(List.of(modsPath, builtinPath), Duration.ofMillis(300));
 
-            // Register the mods path for watching
-            modsPath.register(
-                watchService,
-                StandardWatchEventKinds.ENTRY_CREATE,
-                StandardWatchEventKinds.ENTRY_DELETE,
-                StandardWatchEventKinds.ENTRY_MODIFY
-            );
+        while (running && !Thread.currentThread().isInterrupted()) {
+            // Get the next entry
+            List<HybridWatcher.Entry> entries = hybridWatcher.poll();
 
-            // Register the builtin path for watching
-            builtinPath.register(
-                watchService,
-                StandardWatchEventKinds.ENTRY_CREATE,
-                StandardWatchEventKinds.ENTRY_DELETE,
-                StandardWatchEventKinds.ENTRY_MODIFY
-            );
+            for (HybridWatcher.Entry entry : entries) {
+                // Get the path of the entry
+                Path path = entry.path();
 
-            // Start the watch loop
-            while (running && !Thread.currentThread().isInterrupted()) {
-                // Take a key from the watch service
-                WatchKey key = watchService.take();
+                // Get the type of the entry
+                HybridWatcher.EventType type = entry.type();
 
-                // Process events for this key
-                for (WatchEvent<?> event : key.pollEvents()) {
-                    // Get the kind of the event
-                    WatchEvent.Kind<?> kind = event.kind();
+                // Check if the file is a .zip or .jar file
+                boolean isZip = path.getFileName().toString().endsWith(".zip");
+                boolean isJar = path.getFileName().toString().endsWith(".jar");
+                boolean isMod = isZip || isJar;
 
-                    // Check if the event is a file
-                    if (!(event.context() instanceof Path)) {
-                        continue;
-                    }
-
-                    if (
-                        kind == StandardWatchEventKinds.ENTRY_CREATE
-                        || kind == StandardWatchEventKinds.ENTRY_DELETE
-                        || kind == StandardWatchEventKinds.ENTRY_MODIFY
-                    ) {
-                        // Check if the event is a file
-                        if (!(event.context() instanceof Path)) {
-                            continue;
-                        }
-
-                        // Get the parent path of the event
-                        Path parentPath = (Path) key.watchable();
-
-                        // Get the file path including the directory
-                        Path filePath = parentPath.resolve((Path) event.context());
-
-                        boolean isZip = filePath.getFileName().toString().endsWith(".zip");
-                        boolean isJar = filePath.getFileName().toString().endsWith(".jar");
-                        boolean isMod = isZip || isJar;
-
-                        // Check if the file is a .zip or .jar file
-                        if (!isMod) {
-                            continue;
-                        }
-
-                        reloadMod(filePath);
-                    }
+                // Check if the file is a .zip or .jar file
+                if (!isMod) {
+                    logger.debug("File %s is not a mod, skipping", path.getFileName().toString());
+                    continue;
                 }
 
-                // Reset the key to receive further events
-                boolean valid = key.reset();
+                logger.info("Mod %s has been changed, will be reloaded", path.getFileName().toString());
+
+                // Poll the file path
+                pendingPlugins.add(path);
             }
-        } catch (IOException e) {
-            e.printStackTrace();
-        } catch (InterruptedException e) {
-            e.printStackTrace();
+
+            // Iterate over the pending plugins and reload them
+            for (Path path : pendingPlugins) {
+                try {
+                    // Pay attention that this method can throw an exception or error
+                    reloadMod(path);
+                } catch (Throwable e) {
+                    logger.error("Exception reloading mod %s: %t", path.getFileName().toString(), e);
+                }
+            }
+
+            // Clear the pending plugins
+            pendingPlugins.clear();
         }
     }
 
@@ -123,55 +115,23 @@ public class ModReloadTask extends Thread {
      * Reload a mod
      * @param filePath The path to the mod file
      */
-    private void reloadMod(Path filePath) {
+    private synchronized void reloadMod(Path filePath) throws Exception {
+        logger.info("Reloading mod %s", filePath.getFileName().toString());
+
         try {
-            // Open the .jar or .zip file to look for the manifest.json file
-            InputStream inputStream = new FileInputStream(filePath.toFile());
-            ZipInputStream zipInputStream = new ZipInputStream(inputStream);
-            ZipEntry zipEntry = zipInputStream.getNextEntry();
-            while (zipEntry != null) {
-                if (zipEntry.getName().equals("manifest.json")) {
-                    break;
-                }
-                zipEntry = zipInputStream.getNextEntry();
-            }
+            // Get the manifest of the mod
+            ModJarUtils.ModManifest manifest = ModJarUtils.getModManifest(filePath);
 
-            // Read the manifest.json file
-            BufferedReader reader = new BufferedReader(new InputStreamReader(zipInputStream));
-            String contentsString = "";
-            String line;
-            while ((line = reader.readLine()) != null) {
-                contentsString += line;
-            }
-
-            // Close the streams
-            inputStream.close();
-            zipInputStream.close();
-            reader.close();
-
-            // Parse using Gson
-            JsonObject manifest = new Gson().fromJson(contentsString, JsonObject.class);
-
-            // Get the group and name from the manifest
-            String group = manifest.get("Group").getAsString();
-            String name = manifest.get("Name").getAsString();
-
-            // Get the "Dependencies" and "OptionalDependencies" fields
-            JsonObject dependencies = manifest.get("Dependencies").getAsJsonObject();
-            JsonObject optionalDependencies = manifest.get("OptionalDependencies").getAsJsonObject();
-
-            List<String> dependenciesList = new ArrayList<>();
-
-            for (Map.Entry<String, JsonElement> entry : dependencies.entrySet()) {
-                dependenciesList.add(entry.getKey());
-            }
-
-            for (Map.Entry<String, JsonElement> entry : optionalDependencies.entrySet()) {
-                dependenciesList.add(entry.getKey());
+            // If the manifest is null, the mod is not a valid mod, skip
+            if (manifest == null) {
+                throw new Exception("Mod is not a valid mod, manifest.json file is missing or invalid");
             }
 
             // Get the full plugin name
-            String pluginName = group + ":" + name;
+            String pluginName = manifest.getFullPluginName();
+
+            // Get the dependencies names list
+            List<String> dependenciesNamesList = manifest.getDependenciesNamesList();
 
             // BEFORE reloading the plugin, we need to do a trick to make some internals
             // that are buggy right now work
@@ -185,22 +145,24 @@ public class ModReloadTask extends Thread {
             Map<PluginIdentifier, PluginState> changedPlugins = new HashMap<>();
 
             // Iterate over the dependencies list and fake them
-            for (String dependency : dependenciesList) {
+            for (String dependency : dependenciesNamesList) {
                 // Create a fake plugin identifier
-                PluginIdentifier fakePluginId = PluginIdentifier.fromString(dependency);
+                PluginIdentifier pluginId = PluginIdentifier.fromString(dependency);
 
                 // Get if exists
-                PluginBase pluginBase = plugins.get(fakePluginId);
+                PluginBase pluginBase = plugins.get(pluginId);
 
                 // If it doesn't exist, create it
                 if (pluginBase == null) {
                     pluginBase = new FakeModulePlugin(Main.PLUGIN_INIT);
 
                     // Add the fake plugin to the plugins map
-                    plugins.put(fakePluginId, (JavaPlugin) pluginBase);
+                    plugins.put(pluginId, (JavaPlugin) pluginBase);
 
                     // Add the fake plugin to the list (null means fake plugin was created)
-                    changedPlugins.put(fakePluginId, null);
+                    changedPlugins.put(pluginId, null);
+
+                    logger.debug("Dependency %s fake plugin created", dependency);
                 } else {
                     // Get the state
                     Field stateField = PluginBase.class.getDeclaredField("state");
@@ -208,16 +170,19 @@ public class ModReloadTask extends Thread {
                     PluginState state = (PluginState) stateField.get(pluginBase);
 
                     // Add the plugin to the list
-                    changedPlugins.put(fakePluginId, state);
+                    changedPlugins.put(pluginId, state);
 
                     // Set the state to SETUP
                     stateField.set(pluginBase, PluginState.SETUP);
-                    
+
+                    logger.debug("Dependency %s state set to SETUP", dependency);
                 }
             }
 
             // Perform the "plugin reload <pluginName>" command
             PluginManager.get().reload(PluginIdentifier.fromString(pluginName));
+
+            logger.info("Mod %s has been reloaded", pluginName);
 
             // Iterate over the changed plugins and set the state back
             for (Map.Entry<PluginIdentifier, PluginState> entry : changedPlugins.entrySet()) {
@@ -227,10 +192,14 @@ public class ModReloadTask extends Thread {
                 // Get the state
                 PluginState state = entry.getValue();
 
+                logger.debug("Dependency %s state: %s", pluginId.toString(), state);
+
                 // If the state is null, it means the fake plugin was created
                 if (state == null) {
                     // Remove the fake plugin from the plugins map
                     plugins.remove(pluginId);
+
+                    logger.debug("Dependency %s fake plugin removed", pluginId.toString());
                     continue;
                 }
 
@@ -241,9 +210,12 @@ public class ModReloadTask extends Thread {
                 Field stateField = PluginBase.class.getDeclaredField("state");
                 stateField.setAccessible(true);
                 stateField.set(pluginBase, state);
+
+                logger.debug("Dependency %s state set back to %s", pluginId.toString(), state);
             }
         } catch (Exception e) {
-            e.printStackTrace();
+            logger.error("Exception reloading mod %s: %t", filePath.getFileName().toString(), e);
+            throw e;
         }
     }
 }

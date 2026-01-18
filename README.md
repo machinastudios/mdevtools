@@ -4,7 +4,7 @@ Development tools plugin for Hytale servers and modders that provides automated 
 
 ## Features
 
-- **Log Cleanup**: Automatically removes old log files on startup, keeping only the two most recent
+- **Log Cleanup**: Automatically removes old log files on startup, keeping only the most recent one
 - **Mod Hot-Reload**: Automatically reloads mods when files (`.jar` or `.zip`) are updated in the `mods` or `builtin` directories, without requiring a full server restart
 
 ### How Mod Hot-Reload Works
@@ -17,6 +17,23 @@ The mod hot-reload feature monitors both the `mods` and `builtin` directories fo
 4. **State Restoration**: Any temporary changes made to dependency plugins are reverted, ensuring the plugin system remains consistent
 
 This allows developers to quickly test changes to their mods without restarting the entire server, significantly speeding up the development workflow.
+
+#### File Monitoring: Hybrid Approach with Polling Fallback
+
+MDevTools uses a **hybrid file monitoring approach** that combines Java's `WatchService` (for fast, event-driven detection) with periodic polling as a fallback mechanism. The system automatically detects if `WatchService` is working correctly and falls back to polling when necessary.
+
+**Why polling fallback is necessary:**
+
+- **Docker/Container Environments**: When running in Docker containers with mounted volumes, the `WatchService` may not receive filesystem events correctly. This happens because:
+  - File system events need to propagate through multiple layers (host filesystem → Docker volume → container filesystem)
+  - Container filesystems often use bind mounts or volumes that don't properly forward inotify events
+  - Network filesystems (NFS, CIFS) commonly used in container environments don't reliably support file watching events
+
+- **Virtual Machines**: Similar issues occur in VMs where file system events may not be properly forwarded from the host to the guest system
+
+- **Remote/Network File Systems**: When mod directories are on network-mounted drives, `WatchService` often fails silently
+
+The polling fallback ensures that mod hot-reload works reliably in **all environments**, including Docker, development containers, and remote development setups. While polling may have slightly higher latency than event-driven monitoring, it guarantees that file changes are always detected regardless of the underlying filesystem or containerization layer.
 
 ## Installation
 
@@ -36,8 +53,8 @@ The plugin will automatically start monitoring for mod changes and clean up logs
     "cleanupOnStartup": true
   },
   "mods": {
-    // Whether to restart the server when mods are updated
-    "restartServerWhenUpdated": true
+    // Whether to hot reload mods when they are updated
+    "hotReload": true
   }
 }
 ```

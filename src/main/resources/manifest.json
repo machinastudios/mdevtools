@@ -2,7 +2,7 @@
   "Group": "com.machina",
   "Name": "mdevtools",
   "Version": "1.0.0",
-  "Description": "Development tools for Hytale servers",
+  "Description": "Development tools for Hytale modders and servers",
   "Main": "com.machina.mdevtools.Main",
   "Authors": [
     {
@@ -13,8 +13,6 @@
   ],
   "Website": "https://hytalento.com",
   "ServerVersion": "*",
-  "OptionalDependencies": {},
-  "Dependencies": {},
   "DisabledByDefault": false,
   "IncludesAssetPack": false
 }

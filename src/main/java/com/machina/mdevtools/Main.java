@@ -13,6 +13,7 @@ import com.hypixel.hytale.server.core.plugin.PluginInit;
 import com.machina.mdevtools.tasks.ModReloadTask;
 import com.machina.shared.SuperPlugin;
 import com.machina.shared.config.PluginConfig;
+import com.machina.shared.factory.ModLogger;
 
 /**
  * Internal test plugin for MInterfaceBuilder
@@ -38,6 +39,11 @@ public class Main extends SuperPlugin {
      */
     public List<Thread> tasks = new ArrayList<>();
 
+    /**
+     * The logger for the plugin
+     */
+    public final ModLogger logger = ModLogger.forMod(this);
+
     public Main(@Nonnull JavaPluginInit init) {
         super(init);
         PLUGIN_INIT = init;
@@ -48,17 +54,17 @@ public class Main extends SuperPlugin {
         INSTANCE = this;
         
         // Load the configuration
-        this.loadConfig();
+        loadConfig();
 
-        this.startLogCleanupTask();
-        this.startModReloadTask();
+        runIfEnabled("logs.cleanupOnStartup", "Logs and lock files cleanup on startup is %s", this::startLogCleanupTask);
+        runIfEnabled("mods.restartServerWhenUpdated", "Restart server when mods are updated is %s", this::startModReloadTask);
     }
 
     public void shutdown() {
         super.shutdown();
 
         // Stop all tasks
-        for (Thread task : this.tasks) {
+        for (Thread task : tasks) {
             task.interrupt();
         }
     }
@@ -67,21 +73,16 @@ public class Main extends SuperPlugin {
      * Load the configuration
      */
     private void loadConfig() {
-        this.config.addDefault("logs.cleanupOnStartup", true, "Whether to cleanup logs and lock files on startup");
-        this.config.addDefault("mods.restartServerWhenUpdated", true, "Whether to restart the server when mods are updated");
+        config.addDefault("logs.cleanupOnStartup", true, "Whether to cleanup logs and lock files on startup");
+        config.addDefault("mods.restartServerWhenUpdated", true, "Whether to restart the server when mods are updated");
     
-        this.config.load();
+        config.load();
     }
 
     /**
      * Cleanup logs and lock files on startup
      */
     private void startLogCleanupTask() {
-        // Check if cleanup on startup is enabled
-        if (!this.config.getBoolean("logs.cleanupOnStartup", true)) {
-            return;
-        }
-
         // Cleanup all logs and lock files but the last ones
         // Log files have .log and .log.lck extensions
         File logDir = new File("logs");
@@ -131,13 +132,23 @@ public class Main extends SuperPlugin {
      * Reload mods when they are updated
      */
     private void startModReloadTask() {
-        // Check if reload when updated is enabled
-        if (!this.config.getBoolean("mods.restartServerWhenUpdated", true)) {
-            return;
-        }
-
         // Add a task to watch for mods updates
-        this.startTask(new ModReloadTask());
+        startTask(new ModReloadTask());
+    }
+
+    /**
+     * Run a task if a configuration key is enabled
+     * @param configKey The configuration key
+     * @param message The message to log where %s will be replaced with `enabled` or `disabled`
+     * @param runnable The task to run
+     */
+    private void runIfEnabled(String configKey, String message, Runnable runnable) {
+        boolean enabled = config.getBoolean(configKey, true);
+        logger.info(message, enabled ? "enabled" : "disabled");
+
+        if (enabled) {
+            runnable.run();
+        }
     }
 
     /**
@@ -145,6 +156,6 @@ public class Main extends SuperPlugin {
      * @param task The task to start
      */
     private void startTask(@Nonnull Thread task) {
-        this.tasks.add(Thread.ofPlatform().start(task));
+        tasks.add(Thread.ofPlatform().start(task));
     }
 }
