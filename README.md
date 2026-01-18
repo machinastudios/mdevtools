@@ -24,7 +24,7 @@ Development tools plugin for Hytale servers and modders that provides automated 
 
 ## Installation
 
-1. Place the MDevTools JAR file in your server's `plugins` directory
+1. Place the MDevTools JAR file in your server's `mods` directory
 2. Configure using `config.json5` as needed
 3. Restart the server
 
