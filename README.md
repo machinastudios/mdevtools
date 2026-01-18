@@ -11,12 +11,16 @@ Development tools plugin for Hytale servers and modders that provides automated 
 
 The mod hot-reload feature monitors both the `mods` and `builtin` directories for changes to `.jar` or `.zip` files. When a change is detected:
 
-1. **Manifest Reading**: The plugin reads the `manifest.json` file from the modified mod to extract its identifier and dependencies
-2. **Dependency Handling**: It intelligently handles dependencies (`Dependencies` and `OptionalDependencies`) by temporarily adjusting plugin states to work around internal bugs in the plugin system
-3. **Plugin Reload**: The modified plugin is reloaded using the Hytale server's `PluginManager.reload()` method
-4. **State Restoration**: Any temporary changes made to dependency plugins are reverted, ensuring the plugin system remains consistent
+1. **File Stability Check**: Before attempting to reload, the system waits for the file to be completely written. This prevents attempting to load incomplete files during slow uploads or file copies:
+   - Waits a configurable delay (`mods.reloadDelayMs`) after file detection
+   - Verifies the file size is stable for a configurable duration (`mods.fileStabilityCheckMs`)
+   - Resets the timer if the file is still being written (detected through new change events)
+2. **Manifest Reading**: The plugin reads the `manifest.json` file from the modified mod to extract its identifier and dependencies
+3. **Dependency Handling**: It intelligently handles dependencies (`Dependencies` and `OptionalDependencies`) by temporarily adjusting plugin states to work around internal bugs in the plugin system
+4. **Plugin Reload**: The modified plugin is reloaded using the Hytale server's `PluginManager.reload()` method
+5. **State Restoration**: Any temporary changes made to dependency plugins are reverted, ensuring the plugin system remains consistent
 
-This allows developers to quickly test changes to their mods without restarting the entire server, significantly speeding up the development workflow.
+This allows developers to quickly test changes to their mods without restarting the entire server, significantly speeding up the development workflow. The file stability check ensures reliable operation even with slow network transfers or file copies in progress.
 
 #### File Monitoring: Hybrid Approach with Polling Fallback
 
@@ -34,6 +38,15 @@ MDevTools uses a **hybrid file monitoring approach** that combines Java's `Watch
 - **Remote/Network File Systems**: When mod directories are on network-mounted drives, `WatchService` often fails silently
 
 The polling fallback ensures that mod hot-reload works reliably in **all environments**, including Docker, development containers, and remote development setups. While polling may have slightly higher latency than event-driven monitoring, it guarantees that file changes are always detected regardless of the underlying filesystem or containerization layer.
+
+#### Smart File Stability Detection
+
+To handle slow uploads and file transfers gracefully, MDevTools implements a smart file stability detection system:
+
+- **Configurable Delay**: After a file change is detected, the system waits `mods.reloadDelayMs` before attempting to reload
+- **Size Stability Check**: The system verifies the file size remains unchanged for `mods.fileStabilityCheckMs` to ensure the file is completely written
+- **Dynamic Reset**: If new change events are detected while waiting, the timer is reset, ensuring the system waits for the file transfer to complete
+- **Works with Slow Transfers**: This system handles slow network uploads, large file copies, and any scenario where files are written incrementally
 
 ## Installation
 
@@ -54,10 +67,20 @@ The plugin will automatically start monitoring for mod changes and clean up logs
   },
   "mods": {
     // Whether to hot reload mods when they are updated
-    "hotReload": true
+    "restartServerWhenUpdated": true,
+    // Delay in milliseconds before reloading a mod after it's detected (to ensure file is fully written)
+    // Default: 1000ms (1 second)
+    "reloadDelayMs": 1000,
+    // Time in milliseconds to wait checking if file size is stable before reloading
+    // Default: 500ms (0.5 seconds)
+    "fileStabilityCheckMs": 500
   }
 }
 ```
+
+**Configuration Notes:**
+- `reloadDelayMs`: The initial delay after a file change is detected before starting the stability check. Increase this if you experience issues with files being detected too early (e.g., during slow uploads).
+- `fileStabilityCheckMs`: The duration to monitor file size stability. The file must not change size during this period to be considered stable. Increase this if files are being loaded while still being written.
 
 ## Community
 
