@@ -77,12 +77,6 @@ public class ModReloadTask extends Thread {
 
                     // Set the state
                     stateField.set(pluginBase, state);
-
-                    // Ensure the state is set
-                    PluginState currentState = (PluginState) stateField.get(pluginBase);
-                    if (currentState != state) {
-                        Main.INSTANCE.logger.warn("Dependency %s state not set to %s, current state is %s", dependency.dependencyName, state, currentState);
-                    }
                 } catch (NoSuchFieldException | IllegalAccessException e) {
                     Main.INSTANCE.logger.error("Failed to set dependency %s state to %s: %t", dependency.dependencyName, state, e);
                 }
