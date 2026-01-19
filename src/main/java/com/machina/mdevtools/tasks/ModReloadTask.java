@@ -332,9 +332,6 @@ public class ModReloadTask extends Thread {
                 boolean isFileUrlConnectionUseCaches = URLConnection.getDefaultUseCaches("file");
                 boolean isJarUrlConnectionUseCaches = URLConnection.getDefaultUseCaches("jar");
 
-                logger.info("isFileUrlConnectionUseCaches: %s", isFileUrlConnectionUseCaches);
-                logger.info("isJarUrlConnectionUseCaches: %s", isJarUrlConnectionUseCaches);
-
                 // Disable caching for the file
                 if (isFileUrlConnectionUseCaches) {
                     URLConnection.setDefaultUseCaches("file", false);
