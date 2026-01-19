@@ -24,7 +24,6 @@ import com.machina.mdevtools.tasks.modreload.FakeModulePlugin;
 import com.machina.mdevtools.tasks.modreload.ModReloadDependency;
 import com.machina.mdevtools.tasks.modreload.ModReloadState;
 import com.machina.mdevtools.tasks.modreload.PendingMod;
-import com.machina.mdevtools.tasks.modreload.ChangedPlugin;
 import com.machina.mdevtools.tasks.modreload.ModReloadResult;
 import com.machina.mdevtools.util.HybridWatcher;
 
