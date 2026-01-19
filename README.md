@@ -6,21 +6,24 @@ Development tools plugin for Hytale servers and modders that provides automated 
 
 - **Log Cleanup**: Automatically removes old log files on startup, keeping only the most recent one
 - **Mod Hot-Reload**: Automatically reloads mods when files (`.jar` or `.zip`) are updated in the `mods` or `builtin` directories, without requiring a full server restart
+- **Auto-Load New Mods**: Automatically loads new mods when they are added to the `mods` or `builtin` directories, without requiring a full server restart
 
 ### How Mod Hot-Reload Works
 
-The mod hot-reload feature monitors both the `mods` and `builtin` directories for changes to `.jar` or `.zip` files. When a change is detected:
+The mod hot-reload feature monitors both the `mods` and `builtin` directories for changes to `.jar` or `.zip` files. It can both reload existing mods when they are updated and automatically load new mods when they are added to these directories. When a change is detected:
 
-1. **File Stability Check**: Before attempting to reload, the system waits for the file to be completely written. This prevents attempting to load incomplete files during slow uploads or file copies:
+1. **File Stability Check**: Before attempting to load or reload, the system waits for the file to be completely written. This prevents attempting to load incomplete files during slow uploads or file copies:
    - Waits a configurable delay (`mods.reloadDelayMs`) after file detection
    - Verifies the file size is stable for a configurable duration (`mods.fileStabilityCheckMs`)
    - Resets the timer if the file is still being written (detected through new change events)
-2. **Manifest Reading**: The plugin reads the `manifest.json` file from the modified mod to extract its identifier and dependencies
+2. **Manifest Reading**: The plugin reads the `manifest.json` file from the modified or new mod to extract its identifier and dependencies
 3. **Dependency Handling**: It intelligently handles dependencies (`Dependencies` and `OptionalDependencies`) by temporarily adjusting plugin states to work around internal bugs in the plugin system
-4. **Plugin Reload**: The modified plugin is reloaded using the Hytale server's `PluginManager.reload()` method
+4. **Plugin Load/Reload**: 
+   - For new mods: The plugin is loaded using the Hytale server's `PluginManager.load()` method
+   - For existing mods: The modified plugin is reloaded using the Hytale server's `PluginManager.reload()` method
 5. **State Restoration**: Any temporary changes made to dependency plugins are reverted, ensuring the plugin system remains consistent
 
-This allows developers to quickly test changes to their mods without restarting the entire server, significantly speeding up the development workflow. The file stability check ensures reliable operation even with slow network transfers or file copies in progress.
+This allows developers to quickly test changes to their mods and add new mods without restarting the entire server, significantly speeding up the development workflow. The file stability check ensures reliable operation even with slow network transfers or file copies in progress.
 
 #### File Monitoring: Hybrid Approach with Polling Fallback
 
