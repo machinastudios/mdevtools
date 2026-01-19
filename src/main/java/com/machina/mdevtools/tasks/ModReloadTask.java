@@ -21,6 +21,8 @@ import com.hypixel.hytale.server.core.plugin.PluginManager;
 import com.hypixel.hytale.server.core.plugin.PluginState;
 import com.machina.mdevtools.Main;
 import com.machina.mdevtools.tasks.modreload.FakeModulePlugin;
+import com.machina.mdevtools.tasks.modreload.ModReloadDependency;
+import com.machina.mdevtools.tasks.modreload.ModReloadState;
 import com.machina.mdevtools.tasks.modreload.PendingMod;
 import com.machina.mdevtools.tasks.modreload.ChangedPlugin;
 import com.machina.mdevtools.tasks.modreload.ModReloadResult;
@@ -30,6 +32,64 @@ import com.machina.shared.factory.ModLogger;
 import com.machina.shared.util.ModJarUtils;
 
 public class ModReloadTask extends Thread {
+    /**
+     * List of mod identifiers that are being reloaded
+     */
+    public static final Map<PluginIdentifier, ModReloadState> RELOADING_MODS = new HashMap<>();
+
+    /**
+     * Check if a mod is being reloaded
+     * @param modId The mod identifier
+     * @return True if the mod is being reloaded, false otherwise
+     */
+    public static boolean isReloading(PluginIdentifier modId) {
+        return RELOADING_MODS.containsKey(modId);
+    }
+
+    /**
+     * Set the state of the dependencies of a mod
+     * @param modId The mod identifier
+     * @param state The state to set
+     */
+    public static void setDependenciesState(PluginIdentifier modId, PluginState state) {
+        // Get the reload state of the mod
+        ModReloadState reloadState = RELOADING_MODS.get(modId);
+
+        // If the mod is being reloaded
+        if (reloadState != null) {
+            // Iterate over the dependencies
+            for (ModReloadDependency dependency : reloadState.dependencies()) {
+                Main.INSTANCE.logger.debug("Setting dependency %s state to %s", dependency.dependencyName, state);
+
+                // Get the plugin base
+                PluginBase pluginBase = PluginManager.get().getPlugin(dependency.getDependencyNameAsIdentifier());
+
+                // If the plugin base is null, it means the fake plugin was created
+                if (pluginBase == null) {
+                    Main.INSTANCE.logger.warn("Dependency %s not found, skipping", dependency.dependencyName);
+                    continue;
+                }
+
+                try {
+                    // Get the state
+                    Field stateField = PluginBase.class.getDeclaredField("state");
+                    stateField.setAccessible(true);
+
+                    // Set the state
+                    stateField.set(pluginBase, state);
+
+                    // Ensure the state is set
+                    PluginState currentState = (PluginState) stateField.get(pluginBase);
+                    if (currentState != state) {
+                        Main.INSTANCE.logger.warn("Dependency %s state not set to %s, current state is %s", dependency.dependencyName, state, currentState);
+                    }
+                } catch (NoSuchFieldException | IllegalAccessException e) {
+                    Main.INSTANCE.logger.error("Failed to set dependency %s state to %s: %t", dependency.dependencyName, state, e);
+                }
+            }
+        }
+    }
+
     /**
      * Whether the task is running
      */
@@ -357,7 +417,7 @@ public class ModReloadTask extends Thread {
                  * @see #reloadMod(Path)
                  */
             }
-            
+
             // Small sleep to avoid busy waiting
             try {
                 Thread.sleep(100);
@@ -421,6 +481,9 @@ public class ModReloadTask extends Thread {
     private synchronized ModReloadResult reloadMod(Path filePath) throws Exception {
         logger.info("Reloading mod file %s", filePath.getFileName().toString());
 
+        // The mod identifier
+        PluginIdentifier modId = null;
+
         try {
             // Get the manifest of the mod
             ModJarUtils.ModManifest manifest = ModJarUtils.getModManifest(filePath);
@@ -436,6 +499,15 @@ public class ModReloadTask extends Thread {
             // Get the full plugin name
             String pluginName = manifest.getFullPluginName();
 
+            // Get the mod identifier
+            modId = PluginIdentifier.fromString(pluginName);
+
+            // Create the reload state
+            ModReloadState reloadState = new ModReloadState();
+
+            // Add the plugin to the reloading plugins map
+            RELOADING_MODS.put(modId, reloadState);
+
             // Get the dependencies names list
             List<String> dependenciesNamesList = manifest.getDependenciesNamesList();
 
@@ -447,9 +519,6 @@ public class ModReloadTask extends Thread {
             pluginsField.setAccessible(true);
             Map<PluginIdentifier, JavaPlugin> hytalePluginList = (Map<PluginIdentifier, JavaPlugin>) pluginsField.get(PluginManager.get());
 
-            // List of plugins that had their state changed during reload
-            List<ChangedPlugin> changedPlugins = new ArrayList<>();
-
             // Iterate over the dependencies list and fake them
             for (String dependency : dependenciesNamesList) {
                 // Create a fake plugin identifier
@@ -458,6 +527,9 @@ public class ModReloadTask extends Thread {
                 // Get if exists
                 PluginBase pluginBase = hytalePluginList.get(pluginId);
 
+                // Create the dependency
+                ModReloadDependency reloadDependency = new ModReloadDependency();
+
                 // If it doesn't exist, create it
                 if (pluginBase == null) {
                     pluginBase = new FakeModulePlugin(Main.PLUGIN_INIT);
@@ -465,25 +537,29 @@ public class ModReloadTask extends Thread {
                     // Add the fake plugin to the plugins map
                     hytalePluginList.put(pluginId, (JavaPlugin) pluginBase);
 
-                    // Add the fake plugin to the list (null means fake plugin was created)
-                    changedPlugins.add(new ChangedPlugin(pluginId, null));
-
                     logger.debug("[%s] Dependency %s fake plugin created", pluginName, dependency);
+
+                    // Save the original state (null means fake plugin was created)
+                    reloadDependency.originalState = null;
                 } else {
                     // Get the state
                     Field stateField = PluginBase.class.getDeclaredField("state");
                     stateField.setAccessible(true);
                     PluginState state = (PluginState) stateField.get(pluginBase);
 
-                    // Add the plugin to the list
-                    changedPlugins.add(new ChangedPlugin(pluginId, state));
-
-                    // Set the state to SETUP
-                    stateField.set(pluginBase, PluginState.SETUP);
-
-                    logger.debug("[%s] Dependency %s state set to SETUP", pluginName, dependency);
+                    // Save the original state
+                    reloadDependency.originalState = state;
                 }
+
+                // Add the dependency to the reload state
+                reloadDependency.dependencyName = dependency;
+                reloadDependency.isFakeDependency = pluginBase == null;
+                reloadState.dependencies().add(reloadDependency);
             }
+
+            // Set the dependencies to SETUP
+            // Order is: SETUP -> START
+            setDependenciesState(modId, PluginState.SETUP);
 
             // Find the existing plugin
             JavaPlugin existingPlugin = hytalePluginList.get(PluginIdentifier.fromString(pluginName));
@@ -501,14 +577,14 @@ public class ModReloadTask extends Thread {
             }
 
             // Iterate over the changed plugins and set the state back
-            for (ChangedPlugin changedPlugin : changedPlugins) {
-                PluginIdentifier pluginId = changedPlugin.pluginId();
-                PluginState originalState = changedPlugin.originalState();
+            for (ModReloadDependency dependency : reloadState.dependencies()) {
+                PluginIdentifier pluginId = dependency.getDependencyNameAsIdentifier();
+                PluginState originalState = dependency.originalState;
 
                 logger.debug("[%s] Dependency %s original state: %s", pluginName, pluginId.toString(), originalState);
 
-                // If the state is null, it means the fake plugin was created
-                if (originalState == null) {
+                // If a fake plugin was created
+                if (dependency.isFakeDependency) {
                     // Remove the fake plugin from the plugins map
                     hytalePluginList.remove(pluginId);
 
@@ -526,12 +602,17 @@ public class ModReloadTask extends Thread {
 
                 logger.debug("[%s] Dependency %s state set back to %s", pluginName, pluginId.toString(), originalState);
             }
-            
+
             // Reload was successful
             return ModReloadResult.success();
         } catch (Exception e) {
             // Don't log here - the exception will be logged in the run() method's catch block
             throw e;
+        } finally {
+            // Remove the mod from the reloading mods map
+            if (modId != null) {
+                RELOADING_MODS.remove(modId);
+            }
         }
     }
 }

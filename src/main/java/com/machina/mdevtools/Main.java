@@ -9,7 +9,8 @@ import java.util.List;
 import javax.annotation.Nonnull;
 
 import com.hypixel.hytale.server.core.plugin.JavaPluginInit;
-import com.hypixel.hytale.server.core.plugin.PluginInit;
+import com.hypixel.hytale.server.core.plugin.event.PluginSetupEvent;
+import com.machina.mdevtools.events.PluginEvents;
 import com.machina.mdevtools.tasks.ModReloadTask;
 import com.machina.shared.SuperPlugin;
 import com.machina.shared.config.PluginConfig;
@@ -58,6 +59,9 @@ public class Main extends SuperPlugin {
 
         runIfEnabled("logs.cleanupOnStartup", "Logs and lock files cleanup on startup is %s", this::startLogCleanupTask);
         runIfEnabled("mods.restartServerWhenUpdated", "Restart server when mods are updated is %s", this::startModReloadTask);
+
+        // Register the plugin setup event
+        this.getEventRegistry().registerGlobal(PluginSetupEvent.class, PluginEvents::onPluginSetup);
     }
 
     public void shutdown() {
