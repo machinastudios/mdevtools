@@ -16,8 +16,8 @@ public class PluginEvents {
 
         // If plugin is being reloaded
         if (ModReloadTask.isReloading(pluginId)) {
-            // Call the dependency setter to set the dependency to START
-            ModReloadTask.setDependenciesState(pluginId, PluginState.START);
+            // Call the dependency setter to set the dependency to ENABLED
+            ModReloadTask.setDependenciesState(pluginId, PluginState.ENABLED);
         }
     }
 }

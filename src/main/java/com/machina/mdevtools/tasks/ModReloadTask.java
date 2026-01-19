@@ -551,7 +551,8 @@ public class ModReloadTask extends Thread {
             }
 
             // Set the dependencies to SETUP
-            // Order is: SETUP -> START
+            // Order is: SETUP -> ENABLED
+            // ENABLED is set after the plugin is loaded (using the PluginLoadedEvent)
             setDependenciesState(modId, PluginState.SETUP);
 
             // Find the existing plugin
@@ -562,11 +563,20 @@ public class ModReloadTask extends Thread {
                 logger.info("Mod %s is not loaded yet, will be loaded", pluginName);
 
                 // Load the plugin
-                PluginManager.get().load(PluginIdentifier.fromString(pluginName));
+                if (PluginManager.get().load(PluginIdentifier.fromString(pluginName))) {
+                    logger.info("Mod %s has been loaded", pluginName);
+                } else {
+                    logger.error("Failed to load mod %s", pluginName);
+                    return ModReloadResult.error("Failed to load mod");
+                }
             } else {
                 // Perform the reload
-                PluginManager.get().reload(PluginIdentifier.fromString(pluginName));
-                logger.info("Mod %s has been reloaded", pluginName);
+                if (PluginManager.get().reload(PluginIdentifier.fromString(pluginName))) {
+                    logger.info("Mod %s has been reloaded", pluginName);
+                } else {
+                    logger.error("Failed to reload mod %s", pluginName);
+                    return ModReloadResult.error("Failed to reload mod");
+                }
             }
 
             // Iterate over the changed plugins and set the state back
