@@ -1,9 +1,15 @@
 package com.machina.mdevtools.tasks.modreload;
 
 import com.hypixel.hytale.common.plugin.PluginIdentifier;
+import com.hypixel.hytale.server.core.plugin.PluginBase;
 import com.hypixel.hytale.server.core.plugin.PluginState;
 
 public class ModReloadDependency {
+    /**
+     * The plugin reference
+     */
+    public PluginBase pluginRef;
+
     /**
      * The name of the dependency
      */

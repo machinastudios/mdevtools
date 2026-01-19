@@ -61,11 +61,8 @@ public class ModReloadTask extends Thread {
             for (ModReloadDependency dependency : reloadState.dependencies()) {
                 Main.INSTANCE.logger.debug("Setting dependency %s state to %s", dependency.dependencyName, state);
 
-                // Get the plugin base
-                PluginBase pluginBase = PluginManager.get().getPlugin(dependency.getDependencyNameAsIdentifier());
-
                 // If the plugin base is null, it means the fake plugin was created
-                if (pluginBase == null) {
+                if (dependency.pluginRef == null) {
                     Main.INSTANCE.logger.warn("Dependency %s not found, skipping", dependency.dependencyName);
                     continue;
                 }
@@ -76,7 +73,7 @@ public class ModReloadTask extends Thread {
                     stateField.setAccessible(true);
 
                     // Set the state
-                    stateField.set(pluginBase, state);
+                    stateField.set(dependency.pluginRef, state);
                 } catch (NoSuchFieldException | IllegalAccessException e) {
                     Main.INSTANCE.logger.error("Failed to set dependency %s state to %s: %t", dependency.dependencyName, state, e);
                 }
@@ -535,6 +532,7 @@ public class ModReloadTask extends Thread {
 
                     // Save the original state (null means fake plugin was created)
                     reloadDependency.originalState = null;
+                    reloadDependency.isFakeDependency = true;
                 } else {
                     // Get the state
                     Field stateField = PluginBase.class.getDeclaredField("state");
@@ -543,11 +541,13 @@ public class ModReloadTask extends Thread {
 
                     // Save the original state
                     reloadDependency.originalState = state;
+                    reloadDependency.isFakeDependency = false;
                 }
 
                 // Add the dependency to the reload state
+                reloadDependency.pluginRef = pluginBase;
                 reloadDependency.dependencyName = dependency;
-                reloadDependency.isFakeDependency = pluginBase == null;
+
                 reloadState.dependencies().add(reloadDependency);
             }
 
