@@ -50,7 +50,7 @@ public class Main extends SuperPlugin {
         PLUGIN_INIT = init;
     }
 
-    public void init() {
+    public void start() {
         // Save the instance
         INSTANCE = this;
         
@@ -64,9 +64,7 @@ public class Main extends SuperPlugin {
         this.getEventRegistry().registerGlobal(PluginSetupEvent.class, PluginEvents::onPluginSetup);
     }
 
-    public void shutdown() {
-        super.shutdown();
-
+    public void stop() {
         // Stop all tasks
         for (Thread task : tasks) {
             task.interrupt();
