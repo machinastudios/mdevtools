@@ -78,9 +78,10 @@ public class Main extends SuperPlugin {
      */
     private void loadConfig() {
         config.addDefault("logs.cleanupOnStartup", true, "Whether to cleanup logs and lock files on startup");
-        config.addDefault("mods.restartServerWhenUpdated", true, "Whether to restart the server when mods are updated");
+
         config.addDefault("mods.reloadDelayMs", 1000, "Delay in milliseconds before reloading a mod after it's detected (to ensure file is fully written)");
         config.addDefault("mods.fileStabilityCheckMs", 500, "Time in milliseconds to wait checking if file size is stable before reloading");
+        config.addDefault("mods.unloadWhenDeleted", false, "Whether to unload a mod when it's deleted");
     
         config.load();
     }

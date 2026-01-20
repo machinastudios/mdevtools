@@ -37,48 +37,9 @@ public class ModReloadTask extends Thread {
     public static final Map<PluginIdentifier, ModReloadState> RELOADING_MODS = new HashMap<>();
 
     /**
-     * Check if a mod is being reloaded
-     * @param modId The mod identifier
-     * @return True if the mod is being reloaded, false otherwise
+     * Maximum number of retry attempts for incomplete JARs
      */
-    public static boolean isReloading(PluginIdentifier modId) {
-        return RELOADING_MODS.containsKey(modId);
-    }
-
-    /**
-     * Set the state of the dependencies of a mod
-     * @param modId The mod identifier
-     * @param state The state to set
-     */
-    public static void setDependenciesState(PluginIdentifier modId, PluginState state) {
-        // Get the reload state of the mod
-        ModReloadState reloadState = RELOADING_MODS.get(modId);
-
-        // If the mod is being reloaded
-        if (reloadState != null) {
-            // Iterate over the dependencies
-            for (ModReloadDependency dependency : reloadState.dependencies()) {
-                Main.INSTANCE.logger.debug("Setting dependency %s state to %s", dependency.dependencyName, state);
-
-                // If the plugin base is null, it means the fake plugin was created
-                if (dependency.pluginRef == null) {
-                    Main.INSTANCE.logger.warn("Dependency %s not found, skipping", dependency.dependencyName);
-                    continue;
-                }
-
-                try {
-                    // Get the state
-                    Field stateField = PluginBase.class.getDeclaredField("state");
-                    stateField.setAccessible(true);
-
-                    // Set the state
-                    stateField.set(dependency.pluginRef, state);
-                } catch (NoSuchFieldException | IllegalAccessException e) {
-                    Main.INSTANCE.logger.error("Failed to set dependency %s state to %s: %t", dependency.dependencyName, state, e);
-                }
-            }
-        }
-    }
+    private static final int MAX_RETRIES = 5;
 
     /**
      * Whether the task is running
@@ -120,14 +81,52 @@ public class ModReloadTask extends Thread {
     private long fileStabilityCheckMs;
     
     /**
-     * Maximum number of retry attempts for incomplete JARs
-     */
-    private static final int MAX_RETRIES = 5;
-    
-    /**
      * Whether configuration has been initialized
      */
     private boolean configInitialized = false;
+
+    /**
+     * Check if a mod is being reloaded
+     * @param modId The mod identifier
+     * @return True if the mod is being reloaded, false otherwise
+     */
+    public static boolean isReloading(PluginIdentifier modId) {
+        return RELOADING_MODS.containsKey(modId);
+    }
+
+    /**
+     * Set the state of the dependencies of a mod
+     * @param modId The mod identifier
+     * @param state The state to set
+     */
+    public static void setDependenciesState(PluginIdentifier modId, PluginState state) {
+        ModReloadState reloadState = RELOADING_MODS.get(modId);
+
+        // Ignore if the mod is not being reloaded
+        if (reloadState == null) {
+            return;
+        }
+
+        // Iterate over the dependencies and set the state
+        for (ModReloadDependency dependency : reloadState.dependencies()) {
+            Main.INSTANCE.logger.debug("Setting dependency %s state to %s", dependency.dependencyName, state);
+
+            // Ignore if the dependency is not found
+            if (dependency.pluginRef == null) {
+                Main.INSTANCE.logger.warn("Dependency %s not found, skipping", dependency.dependencyName);
+                continue;
+            }
+
+            // Set the state of the dependency
+            try {
+                Field stateField = PluginBase.class.getDeclaredField("state");
+                stateField.setAccessible(true);
+                stateField.set(dependency.pluginRef, state);
+            } catch (NoSuchFieldException | IllegalAccessException e) {
+                Main.INSTANCE.logger.error("Failed to set dependency %s state to %s: %t", dependency.dependencyName, state, e);
+            }
+        }
+    }
 
     public ModReloadTask() {
         super("Mod Reload Task");
@@ -141,12 +140,18 @@ public class ModReloadTask extends Thread {
      * Initialize configuration values from Main.INSTANCE.config
      */
     private void initConfig() {
+        // Initialize the configuration if it hasn't been initialized yet
         if (!configInitialized && Main.INSTANCE != null && Main.INSTANCE.config != null) {
             try {
+                // Get the reload delay duration
                 reloadDelayMs = Main.INSTANCE.config.getLong("mods.reloadDelayMs", 1000);
+
+                // Get the file stability check duration
                 fileStabilityCheckMs = Main.INSTANCE.config.getLong("mods.fileStabilityCheckMs", 500);
 
+                // Set the configuration initialized flag
                 configInitialized = true;
+                
                 logger.debug(
                     "ModReloadTask config loaded: reloadDelayMs=%d, fileStabilityCheckMs=%d", 
                     reloadDelayMs,
@@ -160,252 +165,29 @@ public class ModReloadTask extends Thread {
 
     @Override
     public void run() {
-        // Initialize configuration
         initConfig();
-        
-        // Watch for .zip and .jar files in the `mods` and `builtin` directories
-        Path modsPath = new File("mods").toPath();
-        Path builtinPath = new File("builtin").toPath();
 
-        // Create a hybrid watcher for the `mods` and `builtin` directories
-        HybridWatcher hybridWatcher = new HybridWatcher(List.of(modsPath, builtinPath), Duration.ofMillis(300));
+        // Get the pathes to watch
+        List<Path> modsPath = List.of(
+            Path.of("mods"),
+            Path.of("builtin"),
+            Path.of("earlyplugins")
+        );
+
+        // Create the hybrid watcher
+        HybridWatcher hybridWatcher = new HybridWatcher(modsPath, Duration.ofMillis(300));
 
         while (running && !Thread.currentThread().isInterrupted()) {
-            // Re-initialize config in case it wasn't loaded yet
             initConfig();
 
-            // Get the next entries
             List<HybridWatcher.Entry> entries = hybridWatcher.poll();
+            Map<Path, HybridWatcher.Entry> uniqueEntries = deduplicateEntries(entries);
+            processNewEntries(uniqueEntries);
 
-            // Deduplicate entries by path - keep only the most recent event per path
-            // This prevents processing the same mod multiple times if it generates multiple events
-            // Use normalized absolute paths to ensure consistent comparison
-            Map<Path, HybridWatcher.Entry> uniqueEntries = new HashMap<>();
-
-            // Iterate over the entries
-            for (HybridWatcher.Entry entry : entries) {
-                // Get the path of the entry and normalize it to ensure consistent comparison
-                Path path = entry.path().toAbsolutePath().normalize();
-
-                // Keep the most recent entry for each path (later entries override earlier ones)
-                uniqueEntries.put(path, new HybridWatcher.Entry(path, entry.type()));
-            }
-
-            // Iterate over the deduplicated entries
-            for (HybridWatcher.Entry entry : uniqueEntries.values()) {
-                // Normalize path to ensure consistent comparison
-                Path path = entry.path().toAbsolutePath().normalize();
-                
-                // Ignore `DELETED` events
-                if (entry.type() == HybridWatcher.EventType.DELETED) {
-                    logger.info("File %s has been deleted, will not be reloaded", path.getFileName().toString());
-
-                    // Remove from pending and retry tracking if it was there
-                    pendingPlugins.remove(path);
-                    retryCounts.remove(path);
-                    continue;
-                }
-
-                // Check if the file is a .zip or .jar file
-                boolean isZip = path.getFileName().toString().endsWith(".zip");
-                boolean isJar = path.getFileName().toString().endsWith(".jar");
-                boolean isMod = isZip || isJar;
-
-                // Check if the file is a .zip or .jar file
-                if (!isMod) {
-                    logger.debug("File %s is not a mod, skipping", path.getFileName().toString());
-                    continue;
-                }
-
-                // Normalize path to ensure consistent comparison
-                Path normalizedPath = path.toAbsolutePath().normalize();
-
-                // Add the file to pending list with current timestamp if not already present
-                long now = System.currentTimeMillis();
-
-                // Check if already in pending (check both normalized and original paths)
-                Path existingKey = null;
-                for (Path key : pendingPlugins.keySet()) {
-                    if (key.toAbsolutePath().normalize().equals(normalizedPath)) {
-                        existingKey = key;
-                        break;
-                    }
-                }
-                
-                if (existingKey == null) {
-                    // Not in pending, add it (reset retry count for new detections)
-                    pendingPlugins.put(normalizedPath, new PendingMod(normalizedPath, now, 0));
-
-                    // Reset retry count for new detection
-                    retryCounts.remove(normalizedPath);
-
-                    logger.info(
-                        "Added mod %s to pending list, waiting for delay and stability check", 
-                        path.getFileName().toString()
-                    );
-                } else {
-                    // File was already detected, update timestamp (file is still being written)
-                    // Remove old entry and add new one with normalized path, preserve retry count
-                    int currentRetryCount = retryCounts.getOrDefault(normalizedPath, 0);
-                    pendingPlugins.remove(existingKey);
-                    pendingPlugins.put(normalizedPath, new PendingMod(normalizedPath, now, currentRetryCount));
-
-                    logger.debug(
-                        "Mod %s still being written, resetting wait timer", 
-                        path.getFileName().toString()
-                    );
-                }
-            }
-
-            // Iterate over the pending plugins and check if they're ready to reload
             long now = System.currentTimeMillis();
-            List<Path> readyToReload = new ArrayList<>();
-            
-            // Create a copy of the pending plugins map to iterate safely while modifying
-            for (PendingMod pendingMod : new ArrayList<>(pendingPlugins.values())) {
-                Path path = pendingMod.path();
+            List<PendingMod> readyMods = findReadyMods(now);
+            processReadyMods(readyMods);
 
-                // Double-check the path is still in pending (might have been removed)
-                if (!pendingPlugins.containsKey(path)) {
-                    continue;
-                }
-                
-                // Get the detected at timestamp
-                long detectedAt = pendingMod.detectedAt();
-
-                // Calculate the time since detection
-                long timeSinceDetection = now - detectedAt;
-
-                // If the time since detection is less than the reload delay
-                if (timeSinceDetection < reloadDelayMs) {
-                    logger.trace(
-                        "Mod %s not ready yet: %d ms since detection (need %d ms)", 
-                        path.getFileName().toString(), timeSinceDetection, reloadDelayMs
-                    );
-
-                    continue;
-                }
-
-                // Check if file is stable (size hasn't changed)
-                if (!isFileStable(path)) {
-                    logger.debug(
-                        "Mod %s size is still changing, waiting for stability", 
-                        path.getFileName().toString()
-                    );
-
-                    continue;
-                }
-
-                // File is ready to reload - remove from pending FIRST to prevent duplicate processing
-                // This ensures that even if the loop runs again before processing, the file won't be added twice
-                PendingMod removedPending = pendingPlugins.remove(path);
-
-                // If the mod was removed from pending
-                if (removedPending != null) {
-                    // Preserve retry count in separate map before removal
-                    retryCounts.put(path, removedPending.retryCount());
-                    readyToReload.add(path);
-
-                    logger.debug(
-                        "Mod %s is ready to reload, added to ready list (retry count: %d)", 
-                        path.getFileName().toString(), removedPending.retryCount()
-                    );
-                }
-            }
-
-            // Reload the ready plugins - deduplicate by path and check if already processing
-            for (Path path : readyToReload) {
-                // Normalize path to ensure consistent comparison
-                Path normalizedPath = path.toAbsolutePath().normalize();
-                
-                // Skip if already being processed (prevent duplicate reloads)
-                synchronized (processingPaths) {
-                    if (processingPaths.contains(normalizedPath)) {
-                        logger.debug("Mod %s is already being processed, skipping duplicate", normalizedPath.getFileName().toString());
-                        continue;
-                    }
-                    // Mark as processing
-                    processingPaths.add(normalizedPath);
-                }
-
-                // Get the default use caches for the file and jar
-                boolean isFileUrlConnectionUseCaches = URLConnection.getDefaultUseCaches("file");
-                boolean isJarUrlConnectionUseCaches = URLConnection.getDefaultUseCaches("jar");
-
-                // Disable caching for the file
-                if (isFileUrlConnectionUseCaches) {
-                    URLConnection.setDefaultUseCaches("file", false);
-                }
-
-                // Disable caching for the jar
-                if (isJarUrlConnectionUseCaches) {
-                    URLConnection.setDefaultUseCaches("jar", false);
-                }
-                
-                ModReloadResult result = null;
-                try {
-                    // Pay attention that this method can throw an exception or error
-                    result = reloadMod(normalizedPath);
-                } catch (Throwable e) {
-                    logger.error("Exception reloading mod %s: %t", normalizedPath.getFileName().toString(), e);
-                    result = ModReloadResult.error(e.getMessage());
-                } finally {
-                    // Remove from processing set when done
-                    synchronized (processingPaths) {
-                        processingPaths.remove(normalizedPath);
-                    }
-
-                    // If the mod should be retried (e.g., JAR is incomplete), add it back to pending
-                    if (result != null && result.shouldRetry()) {
-                        // Get current retry count from the retryCounts map
-                        int currentRetryCount = retryCounts.getOrDefault(normalizedPath, 0);
-                        int newRetryCount = currentRetryCount + 1;
-                        
-                        if (newRetryCount > MAX_RETRIES) {
-                            // Remove from retry tracking since we're giving up
-                            retryCounts.remove(normalizedPath);
-                            logger.warn("Mod %s exceeded maximum retry count (%d), giving up. Reason: %s",
-                                normalizedPath.getFileName().toString(),
-                                MAX_RETRIES,
-                                result.message() != null ? result.message() : "unknown reason"
-                            );
-                        } else {
-                            // Update retry count and add back to pending
-                            retryCounts.put(normalizedPath, newRetryCount);
-                            long retryTimestamp = System.currentTimeMillis();
-                            pendingPlugins.put(normalizedPath, new PendingMod(normalizedPath, retryTimestamp, newRetryCount));
-
-                            logger.debug("Mod %s added back to pending list for retry %d/%d after delay: %s", 
-                                normalizedPath.getFileName().toString(),
-                                newRetryCount,
-                                MAX_RETRIES,
-                                result.message() != null ? result.message() : "unknown reason"
-                            );
-                        }
-                    } else
-                    // If the reload was successful
-                    if (result != null && result.isSuccess()) {
-                        // Clear the retry count
-                        retryCounts.remove(normalizedPath);
-                    }
-                }
-
-                // Restore the default use caches for the file and jar
-                if (isFileUrlConnectionUseCaches) {
-                    URLConnection.setDefaultUseCaches("file", isFileUrlConnectionUseCaches);
-                }
-
-                if (isJarUrlConnectionUseCaches) {
-                    URLConnection.setDefaultUseCaches("jar", isJarUrlConnectionUseCaches);
-                }
-
-                /**
-                 * Note: path was already removed from pendingPlugins before adding to readyToReload
-                 * @see #reloadMod(Path)
-                 */
-            }
-
-            // Small sleep to avoid busy waiting
             try {
                 Thread.sleep(100);
             } catch (InterruptedException e) {
@@ -413,6 +195,299 @@ public class ModReloadTask extends Thread {
                 break;
             }
         }
+    }
+
+    /**
+     * Deduplicate entries by path, keeping only the most recent event per path
+     * @param entries The list of entries to deduplicate
+     * @return Map of unique entries by normalized path
+     */
+    private Map<Path, HybridWatcher.Entry> deduplicateEntries(List<HybridWatcher.Entry> entries) {
+        Map<Path, HybridWatcher.Entry> uniqueEntries = new HashMap<>();
+        for (HybridWatcher.Entry entry : entries) {
+            Path normalizedPath = normalizePath(entry.path());
+            uniqueEntries.put(normalizedPath, new HybridWatcher.Entry(normalizedPath, entry.type()));
+        }
+        return uniqueEntries;
+    }
+
+    /**
+     * Process new file system entries and add them to pending list
+     * @param uniqueEntries Map of unique entries by normalized path
+     */
+    private void processNewEntries(Map<Path, HybridWatcher.Entry> uniqueEntries) {
+        long now = System.currentTimeMillis();
+
+        for (HybridWatcher.Entry entry : uniqueEntries.values()) {
+            Path normalizedPath = normalizePath(entry.path());
+
+            if (!isModFile(normalizedPath)) {
+                logger.debug("File %s is not a mod, skipping", normalizedPath.getFileName().toString());
+                continue;
+            }
+
+            boolean isDeleted = entry.type() == HybridWatcher.EventType.DELETED;
+            Path existingKey = findExistingPendingKey(normalizedPath);
+
+            // If the mod is not in the pending list
+            if (existingKey == null) {
+                // Add the mod to the pending list
+                pendingPlugins.put(normalizedPath, new PendingMod(normalizedPath, now, 0, isDeleted));
+
+                // Remove the mod from the retry counts
+                retryCounts.remove(normalizedPath);
+
+                logger.info(
+                    "Added mod %s to pending list, waiting for delay and stability check", 
+                    normalizedPath.getFileName().toString()
+                );
+            } else {
+                // Get the current retry count
+                int currentRetryCount = retryCounts.getOrDefault(normalizedPath, 0);
+
+                // Remove the mod from the pending list and add it back with the new retry count
+                pendingPlugins.remove(existingKey);
+                pendingPlugins.put(normalizedPath, new PendingMod(normalizedPath, now, currentRetryCount, isDeleted));
+
+                logger.debug(
+                    "Mod %s still being written, resetting wait timer", 
+                    normalizedPath.getFileName().toString()
+                );
+            }
+        }
+    }
+
+    /**
+     * Find mods that are ready to be reloaded
+     * @param now Current timestamp
+     * @return List of ready mods with their event types
+     */
+    private List<PendingMod> findReadyMods(long now) {
+        List<PendingMod> readyMods = new ArrayList<>();
+
+        // Iterate over the pending mods
+        for (PendingMod pendingMod : new ArrayList<>(pendingPlugins.values())) {
+            Path path = pendingMod.path();
+
+            // Ignore if the mod is not in the pending list
+            if (!pendingPlugins.containsKey(path)) {
+                continue;
+            }
+
+            // Get the time since the mod was detected
+            long timeSinceDetection = now - pendingMod.detectedAt();
+
+            // Ignore if the mod is not ready yet
+            if (timeSinceDetection < reloadDelayMs) {
+                logger.trace(
+                    "Mod %s not ready yet: %d ms since detection (need %d ms)", 
+                    path.getFileName().toString(), timeSinceDetection, reloadDelayMs
+                );
+
+                continue;
+            }
+
+            // Ignore if the mod is not stable yet
+            if (!pendingMod.isDeleted() && !isFileStable(path)) {
+                logger.debug(
+                    "Mod %s size is still changing, waiting for stability", 
+                    path.getFileName().toString()
+                );
+
+                continue;
+            }
+
+            // Remove the mod from the pending list and add it to the ready list
+            PendingMod removedPending = pendingPlugins.remove(path);
+
+
+            if (removedPending != null) {
+                // Add the mod to the retry counts and the ready list
+                retryCounts.put(path, removedPending.retryCount());
+                readyMods.add(removedPending);
+
+                logger.debug(
+                    "Mod %s is ready to reload, added to ready list (retry count: %d)", 
+                    path.getFileName().toString(), removedPending.retryCount()
+                );
+            }
+        }
+
+        return readyMods;
+    }
+
+    /**
+     * Process ready mods by reloading or handling deletion
+     * @param readyMods List of mods ready to be processed
+     */
+    private void processReadyMods(List<PendingMod> readyMods) {
+        // Iterate over the ready mods
+        for (PendingMod pendingMod : readyMods) {
+            Path normalizedPath = normalizePath(pendingMod.path());
+
+            // Check if the mod is already being processed
+            synchronized (processingPaths) {
+                if (processingPaths.contains(normalizedPath)) {
+                    logger.debug(
+                        "Mod %s is already being processed, skipping duplicate", 
+                        normalizedPath.getFileName().toString()
+                    );
+
+                    continue;
+                }
+
+                // Add the mod to the processing paths
+                processingPaths.add(normalizedPath);
+            }
+
+            // Get the event type
+            HybridWatcher.EventType eventType = pendingMod.isDeleted() 
+                ? HybridWatcher.EventType.DELETED 
+                : HybridWatcher.EventType.MODIFIED;
+
+            // Disable URL connection caching
+            CacheState cacheState = disableUrlCaching();
+
+            // Initialize the result
+            ModReloadResult result = null;
+
+            try {
+                // On the mod file updated
+                result = onModFileUpdated(normalizedPath, eventType);
+            } catch (Throwable e) {
+                logger.error("Exception while processing mod %s: %t", normalizedPath.getFileName().toString(), e);
+                result = ModReloadResult.error(e.getMessage());
+            } finally {
+                synchronized (processingPaths) {
+                    processingPaths.remove(normalizedPath);
+                }
+
+                // Handle the reload result and restore URL connection caching
+                handleReloadResult(normalizedPath, result, pendingMod);
+                restoreUrlCaching(cacheState);
+            }
+        }
+    }
+
+    /**
+     * Handle the result of a reload operation
+     * @param normalizedPath The normalized path of the mod
+     * @param result The reload result
+     * @param pendingMod The pending mod that was processed
+     */
+    private void handleReloadResult(Path normalizedPath, ModReloadResult result, PendingMod pendingMod) {
+        // Ignore if the result is null
+        if (result == null) {
+            return;
+        }
+
+        // If the result should retry
+        if (result.shouldRetry()) {
+            int currentRetryCount = retryCounts.getOrDefault(normalizedPath, 0);
+            int newRetryCount = currentRetryCount + 1;
+
+            // If the retry count is greater than the maximum retries
+            if (newRetryCount > MAX_RETRIES) {
+                retryCounts.remove(normalizedPath);
+                logger.warn(
+                    "Mod %s exceeded maximum retry count (%d), giving up. Reason: %s",
+                    normalizedPath.getFileName().toString(),
+                    MAX_RETRIES,
+                    result.message() != null ? result.message() : "unknown reason"
+                );
+            } else {
+                // Add the mod back to the pending list with the new retry count
+                retryCounts.put(normalizedPath, newRetryCount);
+
+                // Get the current timestamp
+                long retryTimestamp = System.currentTimeMillis();
+
+                // Add the mod back to the pending list with the new retry count
+                pendingPlugins.put(normalizedPath, new PendingMod(normalizedPath, retryTimestamp, newRetryCount, false));
+    
+                logger.debug(
+                    "Mod %s added back to pending list for retry %d/%d after delay: %s", 
+                    normalizedPath.getFileName().toString(),
+                    newRetryCount,
+                    MAX_RETRIES,
+                    result.message() != null ? result.message() : "unknown reason"
+                );
+            }
+        } else
+        // If the result is successful
+        if (result.isSuccess()) {
+            retryCounts.remove(normalizedPath);
+        }
+    }
+
+    /**
+     * Record to hold URL connection cache state
+     */
+    private record CacheState(boolean fileUseCaches, boolean jarUseCaches) {}
+
+    /**
+     * Disable URL connection caching for file and jar protocols
+     * @return The previous cache state
+     */
+    private CacheState disableUrlCaching() {
+        boolean fileUseCaches = URLConnection.getDefaultUseCaches("file");
+        boolean jarUseCaches = URLConnection.getDefaultUseCaches("jar");
+
+        if (fileUseCaches) {
+            URLConnection.setDefaultUseCaches("file", false);
+        }
+        if (jarUseCaches) {
+            URLConnection.setDefaultUseCaches("jar", false);
+        }
+
+        return new CacheState(fileUseCaches, jarUseCaches);
+    }
+
+    /**
+     * Restore URL connection caching to previous state
+     * @param cacheState The previous cache state
+     */
+    private void restoreUrlCaching(CacheState cacheState) {
+        if (cacheState.fileUseCaches()) {
+            URLConnection.setDefaultUseCaches("file", true);
+        }
+
+        if (cacheState.jarUseCaches()) {
+            URLConnection.setDefaultUseCaches("jar", true);
+        }
+    }
+
+    /**
+     * Normalize a path for consistent comparison
+     * @param path The path to normalize
+     * @return The normalized absolute path
+     */
+    private Path normalizePath(Path path) {
+        return path.toAbsolutePath().normalize();
+    }
+
+    /**
+     * Check if a file is a mod file (.zip or .jar)
+     * @param path The path to check
+     * @return True if the file is a mod, false otherwise
+     */
+    private boolean isModFile(Path path) {
+        String fileName = path.getFileName().toString();
+        return fileName.endsWith(".zip") || fileName.endsWith(".jar");
+    }
+
+    /**
+     * Find an existing pending key that matches the normalized path
+     * @param normalizedPath The normalized path to find
+     * @return The existing key if found, null otherwise
+     */
+    private Path findExistingPendingKey(Path normalizedPath) {
+        for (Path key : pendingPlugins.keySet()) {
+            if (normalizePath(key).equals(normalizedPath)) {
+                return key;
+            }
+        }
+        return null;
     }
 
     /**
@@ -460,159 +535,284 @@ public class ModReloadTask extends Thread {
     }
 
     /**
-     * Reload a mod
+     * Handle mod file update or deletion
      * @param filePath The path to the mod file
-     * @return The result of the reload operation
-     * @throws Exception if an error occurs during reload
+     * @param eventType The event type (MODIFIED, CREATED, or DELETED)
+     * @return The result of the operation
+     * @throws Exception if an error occurs during the operation
      */
-    private synchronized ModReloadResult reloadMod(Path filePath) throws Exception {
-        logger.info("Reloading mod file %s", filePath.getFileName().toString());
+    private synchronized ModReloadResult onModFileUpdated(Path filePath, HybridWatcher.EventType eventType) throws Exception {
+        String fileName = filePath.getFileName().toString();
 
-        // The mod identifier
+        // If the mod file is deleted
+        if (eventType == HybridWatcher.EventType.DELETED) {
+            return onModFileDeleted(filePath, fileName);
+        }
+
+        logger.info("Mod file %s updated", fileName);
         PluginIdentifier modId = null;
 
         try {
-            // Get the manifest of the mod
+            // Get the mod manifest
             ModJarUtils.ModManifest manifest = ModJarUtils.getModManifest(filePath);
 
-            // If the manifest is null, the mod is not a valid mod or the JAR is still incomplete
+            // Ignore if the manifest is missing or invalid
             if (manifest == null) {
                 String message = "manifest.json is missing or invalid, may be incomplete";
-                logger.warn("Mod %s %s - will retry after delay", filePath.getFileName().toString(), message);
-
+                logger.warn("Mod %s %s - will retry after delay", fileName, message);
                 return ModReloadResult.retryNeeded(message);
             }
 
-            // Get the full plugin name
+            // Get the plugin name and mod identifier
             String pluginName = manifest.getFullPluginName();
-
-            // Get the mod identifier
             modId = PluginIdentifier.fromString(pluginName);
 
-            // Create the reload state
+            // Create the reload state and add it to the reloading mods map
             ModReloadState reloadState = new ModReloadState();
-
-            // Add the plugin to the reloading plugins map
             RELOADING_MODS.put(modId, reloadState);
 
-            // Get the dependencies names list
-            List<String> dependenciesNamesList = manifest.getDependenciesNamesList();
-
-            // BEFORE reloading the plugin, we need to do a trick to make some internals
-            // that are buggy right now work
-
-            // Get the "plugins" field
-            Field pluginsField = PluginManager.class.getDeclaredField("plugins");
-            pluginsField.setAccessible(true);
-            Map<PluginIdentifier, JavaPlugin> hytalePluginList = (Map<PluginIdentifier, JavaPlugin>) pluginsField.get(PluginManager.get());
-
-            // Iterate over the dependencies list and fake them
-            for (String dependency : dependenciesNamesList) {
-                // Create a fake plugin identifier
-                PluginIdentifier pluginId = PluginIdentifier.fromString(dependency);
-
-                // Get if exists
-                PluginBase pluginBase = hytalePluginList.get(pluginId);
-
-                // Create the dependency
-                ModReloadDependency reloadDependency = new ModReloadDependency();
-
-                // If it doesn't exist, create it
-                if (pluginBase == null) {
-                    pluginBase = new FakeModulePlugin(Main.PLUGIN_INIT);
-
-                    // Add the fake plugin to the plugins map
-                    hytalePluginList.put(pluginId, (JavaPlugin) pluginBase);
-
-                    logger.debug("[%s] Dependency %s fake plugin created", pluginName, dependency);
-
-                    // Save the original state (null means fake plugin was created)
-                    reloadDependency.originalState = null;
-                    reloadDependency.isFakeDependency = true;
-                } else {
-                    // Get the state
-                    Field stateField = PluginBase.class.getDeclaredField("state");
-                    stateField.setAccessible(true);
-                    PluginState state = (PluginState) stateField.get(pluginBase);
-
-                    // Save the original state
-                    reloadDependency.originalState = state;
-                    reloadDependency.isFakeDependency = false;
-                }
-
-                // Add the dependency to the reload state
-                reloadDependency.pluginRef = pluginBase;
-                reloadDependency.dependencyName = dependency;
-
-                reloadState.dependencies().add(reloadDependency);
-            }
-
-            // Set the dependencies to SETUP
-            // Order is: SETUP -> ENABLED
-            // ENABLED is set after the plugin is loaded (using the PluginLoadedEvent)
+            // Get the plugin map and setup dependencies
+            Map<PluginIdentifier, JavaPlugin> hytalePluginList = getPluginMap();
+            setupDependencies(manifest, reloadState, hytalePluginList, pluginName);
             setDependenciesState(modId, PluginState.SETUP);
 
-            // Find the existing plugin
-            JavaPlugin existingPlugin = hytalePluginList.get(PluginIdentifier.fromString(pluginName));
+            // Get the existing plugin
+            PluginIdentifier pluginId = PluginIdentifier.fromString(pluginName);
+            JavaPlugin existingPlugin = hytalePluginList.get(pluginId);
 
-            // If it doesn't exist, well, it's not supported by now
+            // Ignore if the plugin is not found
             if (existingPlugin == null) {
-                logger.info("Mod %s is not loaded yet, will be loaded", pluginName);
-
-                // Load the plugin
-                if (PluginManager.get().load(PluginIdentifier.fromString(pluginName))) {
-                    logger.info("Mod %s has been loaded", pluginName);
-                } else {
-                    logger.error("Failed to load mod %s", pluginName);
+                if (!loadPlugin(pluginId, pluginName)) {
                     return ModReloadResult.error("Failed to load mod");
                 }
             } else {
-                // Perform the reload
-                if (PluginManager.get().reload(PluginIdentifier.fromString(pluginName))) {
-                    logger.info("Mod %s has been reloaded", pluginName);
-                } else {
-                    logger.error("Failed to reload mod %s", pluginName);
+                if (!reloadPlugin(pluginId, pluginName)) {
                     return ModReloadResult.error("Failed to reload mod");
                 }
             }
 
-            // Iterate over the changed plugins and set the state back
-            for (ModReloadDependency dependency : reloadState.dependencies()) {
-                PluginIdentifier pluginId = dependency.getDependencyNameAsIdentifier();
-                PluginState originalState = dependency.originalState;
+            restoreDependencies(reloadState, hytalePluginList, pluginName);
 
-                logger.debug("[%s] Dependency %s original state: %s", pluginName, pluginId.toString(), originalState);
-
-                // If a fake plugin was created
-                if (dependency.isFakeDependency) {
-                    // Remove the fake plugin from the plugins map
-                    hytalePluginList.remove(pluginId);
-
-                    logger.debug("[%s] Dependency %s fake plugin removed", pluginName, pluginId.toString());
-                    continue;
-                }
-
-                // Get the plugin base
-                PluginBase pluginBase = hytalePluginList.get(pluginId);
-
-                // Set the state back
-                Field stateField = PluginBase.class.getDeclaredField("state");
-                stateField.setAccessible(true);
-                stateField.set(pluginBase, originalState);
-
-                logger.debug("[%s] Dependency %s state set back to %s", pluginName, pluginId.toString(), originalState);
-            }
-
-            // Reload was successful
+            logger.info("Mod %s has been reloaded", pluginName);
             return ModReloadResult.success();
         } catch (Exception e) {
-            // Don't log here - the exception will be logged in the run() method's catch block
             throw e;
         } finally {
-            // Remove the mod from the reloading mods map
             if (modId != null) {
                 RELOADING_MODS.remove(modId);
             }
+        }
+    }
+
+    /**
+     * Handle mod file deletion by disabling the plugin
+     * @param filePath The path to the deleted mod file
+     * @param fileName The file name for logging
+     * @return The result of the deletion operation
+     */
+    private ModReloadResult onModFileDeleted(Path filePath, String fileName) {
+        // If doesn't support deletion, return success
+        if (!Main.INSTANCE.config.getBoolean("mods.unloadWhenDeleted", false)) {
+            logger.warn("Mod %s was deleted, but unloading is not supported, skipping", fileName);
+            return ModReloadResult.success();
+        }
+
+        logger.info("Mod file %s was deleted, attempting to unload plugin", fileName);
+
+        PluginIdentifier modId = null;
+
+        try {
+            // Get the plugin map and find the plugin identifier
+            Map<PluginIdentifier, JavaPlugin> hytalePluginList = getPluginMap();
+            modId = findPluginIdByPath(filePath, hytalePluginList);
+
+            // Ignore if the plugin is not found
+            if (modId == null) {
+                logger.debug("Mod %s was not loaded, nothing to unload", fileName);
+                return ModReloadResult.success();
+            }
+
+            // Get the plugin
+            JavaPlugin plugin = hytalePluginList.get(modId);
+
+            // Ignore if the plugin is not found
+            if (plugin == null) {
+                logger.warn("Plugin %s seems not to be loaded, nothing to unload", modId);
+                return ModReloadResult.success();
+            }
+
+            // Unload the plugin
+            PluginManager.get().unload(modId);
+
+            logger.info("Mod %s has been unloaded", fileName);
+            return ModReloadResult.success();
+        } catch (Exception e) {
+            logger.error("Failed to unload mod %s (%s): %t", fileName, modId, e);
+            return ModReloadResult.error("Failed to unload mod: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Find plugin identifier by file path by checking all loaded plugins
+     * @param filePath The file path to search for
+     * @param hytalePluginList The plugin map
+     * @return The plugin identifier if found, null otherwise
+     */
+    private PluginIdentifier findPluginIdByPath(Path filePath, Map<PluginIdentifier, JavaPlugin> hytalePluginList) {
+        Path normalizedTargetPath = normalizePath(filePath);
+
+        // Iterate over the plugin map
+        for (Map.Entry<PluginIdentifier, JavaPlugin> entry : hytalePluginList.entrySet()) {
+            try {
+                // Get the plugin
+                JavaPlugin plugin = entry.getValue();
+                if (plugin == null) {
+                    continue;
+                }
+
+                Path pluginPath = plugin.getFile();
+                if (pluginPath == null) {
+                    continue;
+                }
+
+                if (normalizePath(pluginPath).equals(normalizedTargetPath)) {
+                    return entry.getKey();
+                }
+            } catch (Exception e) {
+                logger.debug("Error checking plugin path for %s: %t", entry.getKey(), e);
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Get the plugin map using reflection
+     * @return The plugin map
+     * @throws Exception if reflection fails
+     */
+    private Map<PluginIdentifier, JavaPlugin> getPluginMap() throws Exception {
+        Field pluginsField = PluginManager.class.getDeclaredField("plugins");
+        pluginsField.setAccessible(true);
+        @SuppressWarnings("unchecked")
+        Map<PluginIdentifier, JavaPlugin> pluginMap = (Map<PluginIdentifier, JavaPlugin>) pluginsField.get(PluginManager.get());
+        return pluginMap;
+    }
+
+    /**
+     * Setup dependencies for a mod reload
+     * @param manifest The mod manifest
+     * @param reloadState The reload state to populate
+     * @param hytalePluginList The plugin map
+     * @param pluginName The plugin name for logging
+     */
+    private void setupDependencies(
+        ModJarUtils.ModManifest manifest,
+        ModReloadState reloadState,
+        Map<PluginIdentifier, JavaPlugin> hytalePluginList,
+        String pluginName
+    ) throws Exception {
+        // Get the dependencies names list
+        List<String> dependenciesNamesList = manifest.getDependenciesNamesList();
+
+        // Iterate over the dependencies
+        for (String dependency : dependenciesNamesList) {
+            // Get the plugin identifier
+            PluginIdentifier pluginId = PluginIdentifier.fromString(dependency);
+
+            // Get the plugin base
+            PluginBase pluginBase = hytalePluginList.get(pluginId);
+
+            // Create the reload dependency
+            ModReloadDependency reloadDependency = new ModReloadDependency();
+
+            // Ignore if the plugin is not found
+            if (pluginBase == null) {
+                // Create a fake plugin
+                pluginBase = new FakeModulePlugin(Main.PLUGIN_INIT);
+                hytalePluginList.put(pluginId, (JavaPlugin) pluginBase);
+                logger.debug("[%s] Dependency %s fake plugin created", pluginName, dependency);
+                reloadDependency.originalState = null;
+                reloadDependency.isFakeDependency = true;
+            } else {
+                Field stateField = PluginBase.class.getDeclaredField("state");
+                stateField.setAccessible(true);
+                PluginState state = (PluginState) stateField.get(pluginBase);
+                reloadDependency.originalState = state;
+                reloadDependency.isFakeDependency = false;
+            }
+
+            reloadDependency.pluginRef = pluginBase;
+            reloadDependency.dependencyName = dependency;
+            reloadState.dependencies().add(reloadDependency);
+        }
+    }
+
+    /**
+     * Restore dependencies to their original state
+     * @param reloadState The reload state containing dependencies
+     * @param hytalePluginList The plugin map
+     * @param pluginName The plugin name for logging
+     */
+    private void restoreDependencies(
+        ModReloadState reloadState,
+        Map<PluginIdentifier, JavaPlugin> hytalePluginList, 
+        String pluginName
+    ) throws Exception {
+        // Iterate over the dependencies
+        for (ModReloadDependency dependency : reloadState.dependencies()) {
+            PluginIdentifier pluginId = dependency.getDependencyNameAsIdentifier();
+            PluginState originalState = dependency.originalState;
+
+            logger.debug("[%s] Dependency %s original state: %s", pluginName, pluginId.toString(), originalState);
+
+            if (dependency.isFakeDependency) {
+                hytalePluginList.remove(pluginId);
+                logger.debug("[%s] Dependency %s fake plugin removed", pluginName, pluginId.toString());
+                continue;
+            }
+
+            PluginBase pluginBase = hytalePluginList.get(pluginId);
+            Field stateField = PluginBase.class.getDeclaredField("state");
+            stateField.setAccessible(true);
+            stateField.set(pluginBase, originalState);
+
+            logger.debug("[%s] Dependency %s state set back to %s", pluginName, pluginId.toString(), originalState);
+        }
+    }
+
+    /**
+     * Load a plugin
+     * @param pluginId The plugin identifier
+     * @param pluginName The plugin name for logging
+     * @return True if successful, false otherwise
+     */
+    private boolean loadPlugin(PluginIdentifier pluginId, String pluginName) {
+        logger.info("Mod %s is not loaded yet, will be loaded", pluginName);
+
+        // Load the plugin
+        if (PluginManager.get().load(pluginId)) {
+            logger.info("Mod %s has been loaded", pluginName);
+            return true;
+        } else {
+            logger.error("Failed to load mod %s", pluginName);
+            return false;
+        }
+    }
+
+    /**
+     * Reload a plugin
+     * @param pluginId The plugin identifier
+     * @param pluginName The plugin name for logging
+     * @return True if successful, false otherwise
+     */
+    private boolean reloadPlugin(PluginIdentifier pluginId, String pluginName) {
+        // Reload the plugin
+        if (PluginManager.get().reload(pluginId)) {
+            logger.info("Mod %s has been reloaded", pluginName);
+            return true;
+        } else {
+            logger.error("Failed to reload mod %s", pluginName);
+            return false;
         }
     }
 }
