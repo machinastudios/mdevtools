@@ -581,6 +581,12 @@ public class ModReloadTask extends Thread {
                 return ModReloadResult.retryNeeded(message);
             }
 
+            // Check if the mod should be excluded
+            if (shouldExcludeMod(fileName) || shouldExcludeMod(modId)) {
+                logger.info("Mod %s is excluded from reloading, skipping", fileName);
+                return ModReloadResult.success();
+            }
+
             // Get the plugin name and mod identifier
             String pluginName = manifest.getFullPluginName();
             modId = PluginIdentifier.fromString(pluginName);
@@ -835,12 +841,12 @@ public class ModReloadTask extends Thread {
     }
 
     /**
-     * Check if a mod should be reloaded
+     * Check if a mod should be excluded from reloading
      * @param modId The mod identifier
-     * @return True if the mod should be reloaded, false otherwise
+     * @return True if the mod should be excluded, false otherwise
      */
-    private boolean shouldReloadMod(PluginIdentifier modId) {
-        return !shouldExcludeMod(modId.toString());
+    private boolean shouldExcludeMod(PluginIdentifier modId) {
+        return shouldExcludeMod(modId.toString());
     }
 
     /**
@@ -850,7 +856,7 @@ public class ModReloadTask extends Thread {
      */
     private boolean shouldExcludeMod(String modId) {
         // Get the exclude list
-        List<String> excludeList = Main.INSTANCE.config.getList("mods.reload.exclude", List.of());
+        List<String> excludeList = Main.INSTANCE.config.getStringList("mods.reload.exclude", List.of());
 
         // Iterate over the exclude list
         for (String exclude : excludeList) {

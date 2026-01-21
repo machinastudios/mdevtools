@@ -7,6 +7,7 @@ Development tools plugin for Hytale servers and modders that provides automated 
 - **Log Cleanup**: Automatically removes old log files on startup, keeping only the most recent one
 - **Mod Hot-Reload**: Automatically reloads mods when files (`.jar` or `.zip`) are updated in the `mods` or `builtin` directories, without requiring a full server restart
 - **Auto-Load New Mods**: Automatically loads new mods when they are added to the `mods` or `builtin` directories, without requiring a full server restart
+- **Mod Exclusion**: Exclude specific mods from hot-reload using wildcard patterns (supports both mod IDs and file names)
 
 ### How Mod Hot-Reload Works
 
@@ -24,6 +25,23 @@ The mod hot-reload feature monitors both the `mods` and `builtin` directories fo
 5. **State Restoration**: Any temporary changes made to dependency plugins are reverted, ensuring the plugin system remains consistent
 
 This allows developers to quickly test changes to their mods and add new mods without restarting the entire server, significantly speeding up the development workflow. The file stability check ensures reliable operation even with slow network transfers or file copies in progress.
+
+#### Mod Exclusion
+
+You can exclude specific mods from hot-reload by configuring exclusion patterns. This is useful for:
+- **Core/System Mods**: Exclude critical mods that should only be reloaded manually
+- **Large Mods**: Exclude mods that take too long to reload during development
+- **Problematic Mods**: Exclude mods that cause issues when hot-reloaded
+
+Exclusion patterns support wildcards (`*` for any characters, `?` for single character) and will match against both:
+- **Mod IDs**: The full mod identifier (e.g., `com.example:mymod`)
+- **File Names**: The JAR/ZIP file name (e.g., `mymod.jar`)
+
+**Example patterns:**
+- `com.example:*` - Excludes all mods from the `com.example` group
+- `*:core` - Excludes all mods with ID ending in `:core`
+- `mymod.jar` - Excludes the specific file
+- `*test*` - Excludes any mod ID or filename containing "test"
 
 #### File Monitoring: Hybrid Approach with Polling Fallback
 
@@ -76,7 +94,23 @@ The plugin will automatically start monitoring for mod changes and clean up logs
     "reloadDelayMs": 1000,
     // Time in milliseconds to wait checking if file size is stable before reloading
     // Default: 500ms (0.5 seconds)
-    "fileStabilityCheckMs": 500
+    "fileStabilityCheckMs": 500,
+    // Whether to unload a mod when it's deleted from the filesystem
+    // Default: false
+    "unloadWhenDeleted": false,
+    "reload": {
+      // Additional directories to watch for mod updates (beyond mods/, builtin/, earlyplugins/)
+      // Default: []
+      "include": [],
+      // Mods to exclude from hot-reload (supports wildcards: * and ?)
+      // Matches against both mod IDs (group:id) and file names
+      // Default: []
+      "exclude": [
+        "com.example:core",
+        "*:system",
+        "test*.jar"
+      ]
+    }
   }
 }
 ```
@@ -84,6 +118,9 @@ The plugin will automatically start monitoring for mod changes and clean up logs
 **Configuration Notes:**
 - `reloadDelayMs`: The initial delay after a file change is detected before starting the stability check. Increase this if you experience issues with files being detected too early (e.g., during slow uploads).
 - `fileStabilityCheckMs`: The duration to monitor file size stability. The file must not change size during this period to be considered stable. Increase this if files are being loaded while still being written.
+- `unloadWhenDeleted`: When enabled, mods will be automatically unloaded when their JAR/ZIP file is deleted from the filesystem. Use with caution as this can cause issues if mods are temporarily moved or renamed.
+- `reload.include`: Additional directories to monitor for mod changes. By default, the system watches `mods/`, `builtin/`, and `earlyplugins/` directories. Use this to add custom mod directories.
+- `reload.exclude`: List of patterns to exclude mods from hot-reload. Supports wildcards (`*` for any characters, `?` for single character) and matches against both mod IDs (format: `group:id`) and file names. Patterns are cached for optimal performance.
 
 ## Community
 
