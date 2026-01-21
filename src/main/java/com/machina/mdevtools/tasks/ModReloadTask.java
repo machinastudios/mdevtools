@@ -182,7 +182,8 @@ public class ModReloadTask extends Thread {
         // Add the configuration directories
         modsPath.addAll(Main.INSTANCE.config.getList("mods.additionalDirectories", List.of()).stream().map(Object::toString).map(Path::of).toList());
 
-        // Make the list unmodifiable
+        // Deduplicate the list and make it unmodifiable
+        modsPath = modsPath.stream().distinct().toList();
         final List<Path> finalModsPath = List.copyOf(modsPath);
 
         // Create the hybrid watcher
