@@ -80,7 +80,8 @@ public class Main extends SuperPlugin {
         config.addDefault("mods.reloadDelayMs", 1000, "Delay in milliseconds before reloading a mod after it's detected (to ensure file is fully written)");
         config.addDefault("mods.fileStabilityCheckMs", 500, "Time in milliseconds to wait checking if file size is stable before reloading");
         config.addDefault("mods.unloadWhenDeleted", false, "Whether to unload a mod when it's deleted");
-        config.addDefault("mods.additionalDirectories", List.of(), "Additional directories to watch for mods updates");
+        config.addDefault("mods.reload.include", List.of(), "Additional directories to watch for mods updates");
+        config.addDefault("mods.reload.exclude", List.of(), "Mods to exclude from reloading.\nSupports wildcards and will match mod IDs (group:id) and also file names.");
     
         config.load();
     }

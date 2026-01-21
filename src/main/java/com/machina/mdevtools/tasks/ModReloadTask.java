@@ -12,6 +12,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Pattern;
 
 import com.hypixel.hytale.common.plugin.PluginIdentifier;
 import com.hypixel.hytale.server.core.Options;
@@ -63,6 +64,11 @@ public class ModReloadTask extends Thread {
      * Set of paths currently being processed to prevent duplicate reloads
      */
     private Set<Path> processingPaths = new HashSet<>();
+
+    /**
+     * Cache of compiled exclude patterns to avoid recompiling regex patterns
+     */
+    private final Map<String, Pattern> excludePatternCache = new HashMap<>();
 
     /**
      * The logger for the task
@@ -180,7 +186,7 @@ public class ModReloadTask extends Thread {
         modsPath.addAll(Options.EARLY_PLUGIN_DIRECTORIES.options().stream().map(Path::of).toList());
 
         // Add the configuration directories
-        modsPath.addAll(Main.INSTANCE.config.getList("mods.additionalDirectories", List.of()).stream().map(Object::toString).map(Path::of).toList());
+        modsPath.addAll(Main.INSTANCE.config.getList("mods.reload.include", List.of()).stream().map(Object::toString).map(Path::of).toList());
 
         // Deduplicate the list and make it unmodifiable
         modsPath = modsPath.stream().distinct().toList();
@@ -826,5 +832,59 @@ public class ModReloadTask extends Thread {
             logger.error("Failed to reload mod %s", pluginName);
             return false;
         }
+    }
+
+    /**
+     * Check if a mod should be reloaded
+     * @param modId The mod identifier
+     * @return True if the mod should be reloaded, false otherwise
+     */
+    private boolean shouldReloadMod(PluginIdentifier modId) {
+        return !shouldExcludeMod(modId.toString());
+    }
+
+    /**
+     * Check if a mod should be excluded from reloading
+     * @param modId The mod identifier or filename
+     * @return True if the mod should be excluded, false otherwise
+     */
+    private boolean shouldExcludeMod(String modId) {
+        // Get the exclude list
+        List<String> excludeList = Main.INSTANCE.config.getList("mods.reload.exclude", List.of());
+
+        // Iterate over the exclude list
+        for (String exclude : excludeList) {
+            // Check cache first
+            Pattern pattern = excludePatternCache.get(exclude);
+            
+            // If not in cache, compile and cache it
+            if (pattern == null) {
+                pattern = Pattern.compile(
+                    exclude
+                        // Convert wildcards to regex patterns
+                        .replace("*", ".*")
+
+                        // Escape special regex characters
+                        .replace("?", ".")
+                        .replace(".", "\\.")
+                        .replace("+", "\\+")
+                        .replace("|", "\\|")
+                        .replace("(", "\\(")
+                        .replace(")", "\\)")
+                        .replace("{", "\\{")
+                        .replace("}", "\\}")
+                        .replace("[", "\\[")
+                        .replace("]", "\\]")
+                );
+                excludePatternCache.put(exclude, pattern);
+            }
+
+            // Check if the mod ID matches the exclude
+            if (pattern.matcher(modId).matches()) {
+                return true;
+            }
+        }
+
+        return false;
     }
 }
