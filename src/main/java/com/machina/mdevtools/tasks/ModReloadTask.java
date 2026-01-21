@@ -1,6 +1,5 @@
 package com.machina.mdevtools.tasks;
 
-import java.io.File;
 import java.io.IOException;
 import java.lang.reflect.Field;
 import java.net.URLConnection;
@@ -15,6 +14,7 @@ import java.util.Map;
 import java.util.Set;
 
 import com.hypixel.hytale.common.plugin.PluginIdentifier;
+import com.hypixel.hytale.server.core.Options;
 import com.hypixel.hytale.server.core.plugin.JavaPlugin;
 import com.hypixel.hytale.server.core.plugin.PluginBase;
 import com.hypixel.hytale.server.core.plugin.PluginManager;
@@ -22,11 +22,10 @@ import com.hypixel.hytale.server.core.plugin.PluginState;
 import com.machina.mdevtools.Main;
 import com.machina.mdevtools.tasks.modreload.FakeModulePlugin;
 import com.machina.mdevtools.tasks.modreload.ModReloadDependency;
+import com.machina.mdevtools.tasks.modreload.ModReloadResult;
 import com.machina.mdevtools.tasks.modreload.ModReloadState;
 import com.machina.mdevtools.tasks.modreload.PendingMod;
-import com.machina.mdevtools.tasks.modreload.ModReloadResult;
 import com.machina.mdevtools.util.HybridWatcher;
-
 import com.machina.shared.factory.ModLogger;
 import com.machina.shared.util.ModJarUtils;
 
@@ -174,8 +173,20 @@ public class ModReloadTask extends Thread {
             Path.of("earlyplugins")
         );
 
+        // Add the mods option
+        modsPath.addAll(Options.MODS_DIRECTORIES.options().stream().map(Path::of).toList());
+
+        // Add the early plugin directories
+        modsPath.addAll(Options.EARLY_PLUGIN_DIRECTORIES.options().stream().map(Path::of).toList());
+
+        // Add the configuration directories
+        modsPath.addAll(Main.INSTANCE.config.getList("mods.additionalDirectories", List.of()).stream().map(Object::toString).map(Path::of).toList());
+
+        // Make the list unmodifiable
+        final List<Path> finalModsPath = List.copyOf(modsPath);
+
         // Create the hybrid watcher
-        HybridWatcher hybridWatcher = new HybridWatcher(modsPath, Duration.ofMillis(300));
+        HybridWatcher hybridWatcher = new HybridWatcher(finalModsPath, Duration.ofMillis(300));
 
         while (running && !Thread.currentThread().isInterrupted()) {
             initConfig();
