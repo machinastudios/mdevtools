@@ -13,7 +13,7 @@ import com.hypixel.hytale.server.core.plugin.event.PluginSetupEvent;
 import com.machina.mdevtools.events.PluginEvents;
 import com.machina.mdevtools.tasks.ModReloadTask;
 import com.machina.shared.SuperPlugin;
-import com.machina.shared.config.ModConfig;
+import com.machina.shared.config.ConfigurationFile;
 import com.machina.shared.factory.ModLogger;
 
 /**
@@ -33,7 +33,7 @@ public class Main extends SuperPlugin {
     /**
      * The plugin configuration
      */
-    public ModConfig config = new ModConfig(this, "config");
+    public ConfigurationFile config = new ConfigurationFile(this, "config");
 
     /**
      * The tasks to run
