@@ -15,6 +15,7 @@ import java.util.Set;
 import java.util.regex.Pattern;
 
 import com.hypixel.hytale.common.plugin.PluginIdentifier;
+import com.hypixel.hytale.server.core.Message;
 import com.hypixel.hytale.server.core.Options;
 import com.hypixel.hytale.server.core.plugin.JavaPlugin;
 import com.hypixel.hytale.server.core.plugin.PluginBase;
@@ -29,6 +30,7 @@ import com.machina.mdevtools.tasks.modreload.PendingMod;
 import com.machina.mdevtools.util.HybridWatcher;
 import com.machina.shared.factory.ModLogger;
 import com.machina.shared.util.ModJarUtils;
+import com.machina.shared.util.PlayerUtil;
 
 public class ModReloadTask extends Thread {
     /**
@@ -37,9 +39,19 @@ public class ModReloadTask extends Thread {
     public static final Map<PluginIdentifier, ModReloadState> RELOADING_MODS = new HashMap<>();
 
     /**
+     * Reference to the current instance of the task
+     */
+    private static volatile ModReloadTask instance;
+
+    /**
      * Maximum number of retry attempts for incomplete JARs
      */
     private static final int MAX_RETRIES = 5;
+
+    /**
+     * The logger for the task (lazy initialized)
+     */
+    private static final ModLogger logger = ModLogger.forMod(Main.INSTANCE, "ModReloadTask");
 
     /**
      * Whether the task is running
@@ -71,11 +83,6 @@ public class ModReloadTask extends Thread {
     private final Map<String, Pattern> excludePatternCache = new HashMap<>();
 
     /**
-     * The logger for the task
-     */
-    private final ModLogger logger = ModLogger.forMod(Main.INSTANCE, "ModReloadTask");
-
-    /**
      * Delay in milliseconds before reloading a mod after it's detected
      */
     private long reloadDelayMs;
@@ -89,6 +96,79 @@ public class ModReloadTask extends Thread {
      * Whether configuration has been initialized
      */
     private boolean configInitialized = false;
+
+    /**
+     * Add a plugin to the pending list
+     * @param pluginId The plugin identifier
+     */
+    public static void addPendingPlugin(PluginIdentifier pluginId) {
+        // Add to the reloading mods map
+        RELOADING_MODS.put(pluginId, new ModReloadState());
+
+        // Get the current instance
+        ModReloadTask currentInstance = instance;
+        if (currentInstance == null) {
+            if (Main.INSTANCE != null) {
+                logger.warn("ModReloadTask instance not available, plugin %s added to RELOADING_MODS but not to pending list", pluginId);
+            }
+            return;
+        }
+
+        try {
+            // Get the plugin map to find the plugin file
+            Map<PluginIdentifier, JavaPlugin> hytalePluginList = currentInstance.getPluginMap();
+            JavaPlugin plugin = hytalePluginList.get(pluginId);
+
+            // If the plugin is not found, log a warning
+            if (plugin == null) {
+                logger.warn("Plugin %s not found in plugin map, cannot add to pending list", pluginId);
+                return;
+            }
+
+            // Get the plugin file path
+            Path pluginPath = plugin.getFile();
+            if (pluginPath == null) {
+                logger.warn("Plugin %s has no file path, cannot add to pending list", pluginId);
+                return;
+            }
+
+            // Normalize the path
+            Path normalizedPath = currentInstance.normalizePath(pluginPath);
+
+            // Check if the file exists and is a mod file
+            if (!Files.exists(normalizedPath)) {
+                logger.warn("Plugin file %s does not exist, cannot add to pending list", normalizedPath);
+                return;
+            }
+
+            if (!currentInstance.isModFile(normalizedPath)) {
+                logger.warn("Plugin file %s is not a mod file, cannot add to pending list", normalizedPath);
+                return;
+            }
+
+            long now = System.currentTimeMillis();
+
+            synchronized (currentInstance.pendingPlugins) {
+                // Check if already in pending list (inside synchronized block to avoid race conditions)
+                Path existingKey = currentInstance.findExistingPendingKey(normalizedPath);
+                
+                if (existingKey != null) {
+                    // Update the existing entry
+                    int currentRetryCount = currentInstance.retryCounts.getOrDefault(normalizedPath, 0);
+                    currentInstance.pendingPlugins.remove(existingKey);
+                    currentInstance.pendingPlugins.put(normalizedPath, new PendingMod(normalizedPath, now, currentRetryCount, false));
+                    logger.debug("Plugin %s already in pending list, resetting wait timer", pluginId);
+                } else {
+                    // Add new entry
+                    currentInstance.pendingPlugins.put(normalizedPath, new PendingMod(normalizedPath, now, 0, false));
+                    currentInstance.retryCounts.remove(normalizedPath);
+                    logger.info("Plugin %s added to pending list for reload", pluginId);
+                }
+            }
+        } catch (Exception e) {
+            logger.error("Failed to add plugin %s to pending list: %t", pluginId, e);
+        }
+    }
 
     /**
      * Check if a mod is being reloaded
@@ -114,11 +194,11 @@ public class ModReloadTask extends Thread {
 
         // Iterate over the dependencies and set the state
         for (ModReloadDependency dependency : reloadState.dependencies()) {
-            Main.INSTANCE.logger.debug("Setting dependency %s state to %s", dependency.dependencyName, state);
+            logger.debug("Setting dependency %s state to %s", dependency.dependencyName, state);
 
             // Ignore if the dependency is not found
             if (dependency.pluginRef == null) {
-                Main.INSTANCE.logger.warn("Dependency %s not found, skipping", dependency.dependencyName);
+                logger.warn("Dependency %s not found, skipping", dependency.dependencyName);
                 continue;
             }
 
@@ -128,13 +208,16 @@ public class ModReloadTask extends Thread {
                 stateField.setAccessible(true);
                 stateField.set(dependency.pluginRef, state);
             } catch (NoSuchFieldException | IllegalAccessException e) {
-                Main.INSTANCE.logger.error("Failed to set dependency %s state to %s: %t", dependency.dependencyName, state, e);
+                logger.error("Failed to set dependency %s state to %s: %t", dependency.dependencyName, state, e);
             }
         }
     }
 
     public ModReloadTask() {
         super("Mod Reload Task");
+        
+        // Register this instance
+        instance = this;
         
         // Load configuration values (will be set in first run() iteration if needed)
         this.reloadDelayMs = 1000; // Default value, will be overridden in run()
@@ -179,14 +262,23 @@ public class ModReloadTask extends Thread {
             Path.of("earlyplugins")
         );
 
+        // Workaround for java.lang.UnsupportedOperationException (ImmutableCollections)
+        // List.of() returns an immutable list, so we must use a mutable list for addAll()
+        List<Path> mutableModsPath = new ArrayList<>(modsPath);
+
         // Add the mods option
-        modsPath.addAll(Options.MODS_DIRECTORIES.options().stream().map(Path::of).toList());
+        mutableModsPath.addAll(Options.MODS_DIRECTORIES.options().stream().map(Path::of).toList());
 
         // Add the early plugin directories
-        modsPath.addAll(Options.EARLY_PLUGIN_DIRECTORIES.options().stream().map(Path::of).toList());
+        mutableModsPath.addAll(Options.EARLY_PLUGIN_DIRECTORIES.options().stream().map(Path::of).toList());
 
         // Add the configuration directories
-        modsPath.addAll(Main.INSTANCE.config.getList("mods.reload.include", List.of()).stream().map(Object::toString).map(Path::of).toList());
+        mutableModsPath.addAll(Main.INSTANCE.config.getList("mods.reload.include", List.of()).stream()
+            .map(Object::toString)
+            .map(Path::of)
+            .toList());
+
+        modsPath = mutableModsPath;
 
         // Deduplicate the list and make it unmodifiable
         modsPath = modsPath.stream().distinct().toList();
@@ -581,15 +673,15 @@ public class ModReloadTask extends Thread {
                 return ModReloadResult.retryNeeded(message);
             }
 
+            // Get the plugin name and mod identifier
+            String pluginName = manifest.getFullPluginName();
+            modId = PluginIdentifier.fromString(pluginName);
+
             // Check if the mod should be excluded
             if (shouldExcludeMod(fileName) || shouldExcludeMod(modId)) {
                 logger.info("Mod %s is excluded from reloading, skipping", fileName);
                 return ModReloadResult.success();
             }
-
-            // Get the plugin name and mod identifier
-            String pluginName = manifest.getFullPluginName();
-            modId = PluginIdentifier.fromString(pluginName);
 
             // Create the reload state and add it to the reloading mods map
             ModReloadState reloadState = new ModReloadState();
@@ -607,17 +699,41 @@ public class ModReloadTask extends Thread {
             // Ignore if the plugin is not found
             if (existingPlugin == null) {
                 if (!loadPlugin(pluginId, pluginName)) {
+                    PlayerUtil.sendMessageWithPermission(
+                        Message.raw("Failed to load mod " + pluginName),
+                        "mdevtools.command.plugin.reload"
+                    );
+
                     return ModReloadResult.error("Failed to load mod");
                 }
             } else {
                 if (!reloadPlugin(pluginId, pluginName)) {
+                    PlayerUtil.sendMessageWithPermission(
+                        Message.raw("Failed to reload mod " + pluginName),
+                        "mdevtools.command.plugin.reload"
+                    );
+
                     return ModReloadResult.error("Failed to reload mod");
                 }
             }
 
+            /**
+             * @todo after mod reload, also load all their classes in the class loader
+             * since sometimes not all classes are loaded by the plugin manager
+             * and if a plugin gets unloaded and uses a class that is not loaded,
+             * it will cause a class not found error.
+             */
+
             restoreDependencies(reloadState, hytalePluginList, pluginName);
 
             logger.info("Mod %s has been reloaded", pluginName);
+
+            // Announce the reload
+            PlayerUtil.sendMessageWithPermission(
+                Message.raw("Mod " + pluginName + " has been reloaded"),
+                "mdevtools.command.plugin.reload"
+            );
+
             return ModReloadResult.success();
         } catch (Exception e) {
             throw e;
@@ -846,6 +962,11 @@ public class ModReloadTask extends Thread {
      * @return True if the mod should be excluded, false otherwise
      */
     private boolean shouldExcludeMod(PluginIdentifier modId) {
+        // Ignore if the mod ID is null
+        if (modId == null) {
+            return false;
+        }
+
         return shouldExcludeMod(modId.toString());
     }
 

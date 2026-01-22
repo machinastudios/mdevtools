@@ -8,8 +8,10 @@ import java.util.List;
 
 import javax.annotation.Nonnull;
 
+import com.hypixel.hytale.protocol.packets.interface_.ChatMessage;
 import com.hypixel.hytale.server.core.plugin.JavaPluginInit;
 import com.hypixel.hytale.server.core.plugin.event.PluginSetupEvent;
+import com.machina.mdevtools.events.CommandInterceptorEvent;
 import com.machina.mdevtools.events.PluginEvents;
 import com.machina.mdevtools.tasks.ModReloadTask;
 import com.machina.shared.SuperPlugin;
@@ -60,6 +62,9 @@ public class Main extends SuperPlugin {
         runIfEnabled("logs.cleanupOnStartup", "Logs and lock files cleanup on startup is %s", this::startLogCleanupTask);
         runIfEnabled("mods.restartServerWhenUpdated", "Restart server when mods are updated is %s", this::startModReloadTask);
 
+        // Register the command interceptor event
+        getPacketInterceptorRegistry().registerInterceptor(ChatMessage.class, CommandInterceptorEvent::onCommand);
+
         // Register the plugin setup event
         this.getEventRegistry().registerGlobal(PluginSetupEvent.class, PluginEvents::onPluginSetup);
     }
@@ -82,7 +87,7 @@ public class Main extends SuperPlugin {
         config.addDefault("mods.unloadWhenDeleted", false, "Whether to unload a mod when it's deleted");
         config.addDefault("mods.reload.include", List.of(), "Additional directories to watch for mods updates");
         config.addDefault("mods.reload.exclude", List.of(), "Mods to exclude from reloading.\nSupports wildcards and will match mod IDs (group:id) and also file names.");
-    
+
         config.load();
     }
 
