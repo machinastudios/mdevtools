@@ -273,7 +273,7 @@ public class ModReloadTask extends Thread {
         mutableModsPath.addAll(Options.EARLY_PLUGIN_DIRECTORIES.options().stream().map(Path::of).toList());
 
         // Add the configuration directories
-        mutableModsPath.addAll(Main.INSTANCE.config.getList("mods.reload.include", List.of()).stream()
+        mutableModsPath.addAll(Main.INSTANCE.config.getList("mods.reload.additionalDirectories", List.of()).stream()
             .map(Object::toString)
             .map(Path::of)
             .toList());

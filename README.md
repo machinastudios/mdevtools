@@ -119,7 +119,7 @@ The plugin will automatically start monitoring for mod changes and clean up logs
 - `reloadDelayMs`: The initial delay after a file change is detected before starting the stability check. Increase this if you experience issues with files being detected too early (e.g., during slow uploads).
 - `fileStabilityCheckMs`: The duration to monitor file size stability. The file must not change size during this period to be considered stable. Increase this if files are being loaded while still being written.
 - `unloadWhenDeleted`: When enabled, mods will be automatically unloaded when their JAR/ZIP file is deleted from the filesystem. Use with caution as this can cause issues if mods are temporarily moved or renamed.
-- `reload.include`: Additional directories to monitor for mod changes. By default, the system watches `mods/`, `builtin/`, and `earlyplugins/` directories. Use this to add custom mod directories.
+- `reload.additionalDirectories`: Additional directories to monitor for mod changes. By default, the system watches `mods/`, `builtin/`, and `earlyplugins/` directories. Use this to add custom mod directories.
 - `reload.exclude`: List of patterns to exclude mods from hot-reload. Supports wildcards (`*` for any characters, `?` for single character) and matches against both mod IDs (format: `group:id`) and file names. Patterns are cached for optimal performance.
 
 ## Community
