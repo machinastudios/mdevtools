@@ -130,7 +130,7 @@ public final class ModReloadPluginManager {
             // Get the asset packet files
             var assetPacketFileSystem = assetModule.getAssetPack(pluginId.toString()).getFileSystem();
 
-            resendAllAssetsToClients(assetPacketFileSystem);
+            //resendAllAssetsToClients(assetPacketFileSystem);
         }
         
         logger.info("Mod %s has been reloaded", pluginName);
