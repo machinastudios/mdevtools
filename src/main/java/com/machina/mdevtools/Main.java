@@ -11,6 +11,7 @@ import javax.annotation.Nonnull;
 import com.hypixel.hytale.protocol.packets.interface_.ChatMessage;
 import com.hypixel.hytale.server.core.plugin.JavaPluginInit;
 import com.hypixel.hytale.server.core.plugin.event.PluginSetupEvent;
+import com.machina.mdevtools.commands.MDevToolsCommand;
 import com.machina.mdevtools.events.CommandInterceptorEvent;
 import com.machina.mdevtools.events.PluginEvents;
 import com.machina.mdevtools.tasks.ModReloadTask;
@@ -64,6 +65,9 @@ public class Main extends SuperPlugin {
 
         // Register the command interceptor event
         getPacketInterceptorRegistry().registerInterceptor(ChatMessage.class, CommandInterceptorEvent::onCommand);
+
+        // Register the command
+        this.getCommandRegistry().registerCommand(new MDevToolsCommand());
 
         // Register the plugin setup event
         this.getEventRegistry().registerGlobal(PluginSetupEvent.class, PluginEvents::onPluginSetup);

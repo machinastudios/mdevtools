@@ -14,5 +14,5 @@
   "Website": "https://hytalento.com",
   "ServerVersion": "*",
   "DisabledByDefault": false,
-  "IncludesAssetPack": false
+  "IncludesAssetPack": true
 }
