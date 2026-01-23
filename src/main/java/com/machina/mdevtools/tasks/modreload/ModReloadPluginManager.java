@@ -123,12 +123,16 @@ public final class ModReloadPluginManager {
             return false;
         }
 
+        // Try to get the asset packet
+        // @todo this is returning null, so we will need to load the asset packet first
+        var assetPacket = assetModule.getAssetPack(pluginId.toString());
+
         // If an asset packet for the plugin was registered
-        if (assetModule.getAssetPack(pluginId.toString()) != null) {
+        if (assetPacket != null) {
             logger.info("Resending all assets to clients for mod %s", pluginName);
 
             // Get the asset packet files
-            var assetPacketFileSystem = assetModule.getAssetPack(pluginId.toString()).getFileSystem();
+            var assetPacketFileSystem = assetPacket.getFileSystem();
 
             //resendAllAssetsToClients(assetPacketFileSystem);
         }
