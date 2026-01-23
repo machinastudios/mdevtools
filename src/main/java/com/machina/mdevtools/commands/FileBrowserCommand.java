@@ -18,8 +18,8 @@ import com.machina.minterfacebuilder.factory.ComponentFactory;
 import com.machina.minterfacebuilder.helpers.Color;
 import com.machina.minterfacebuilder.helpers.LayoutMode;
 import com.machina.minterfacebuilder.util.customui.ComponentBuilder;
-import com.machina.minterfacebuilder.util.customui.components.HButton;
 import com.machina.minterfacebuilder.util.customui.components.HTitle;
+import com.machina.minterfacebuilder.util.customui.components.base.Button;
 import com.machina.minterfacebuilder.util.customui.components.base.Group;
 import com.machina.minterfacebuilder.util.customui.components.base.Image;
 import com.machina.minterfacebuilder.util.customui.components.base.Label;
@@ -76,7 +76,8 @@ class FileBrowserPage extends DecoratedDialogPage {
         // Create the file list group
         fileListGroup = (Group) ComponentFactory.create(Group.class)
             .setId("FileList")
-            .setProperty("LayoutMode", LayoutMode.TOP);
+            .setProperty("LayoutMode", LayoutMode.TOP)
+            .setProperty("Anchor", Map.of("Width", FileBrowserLine.getTotalWidth()));
 
         // Create the file entries
         listCurrentPathFiles();
@@ -87,6 +88,9 @@ class FileBrowserPage extends DecoratedDialogPage {
 
         // Add the file list group to the page
         updateListUI();
+
+        // Add the file list group to the dialog
+        getDialog().setContent(fileListGroup);
     }
 
     /**
@@ -179,6 +183,9 @@ class FileBrowserPage extends DecoratedDialogPage {
             fileList.add(0, new FileBrowserFileEntry(getRootPath(), index++, ".."));
         }
 
+        // Add the header line to the file list group
+        fileListGroup.appendChild(new FileBrowserLineLabel());
+
         // List the files in the current path
         for (FileBrowserFileEntry fileEntry : getFileEntries()) {
             // Set the index
@@ -190,7 +197,7 @@ class FileBrowserPage extends DecoratedDialogPage {
             // If it's a directory
             if (fileEntry.getFile().isDirectory()) {
                 // Add an event listener for the directory buttons
-                addEventListener(EventType.CLICK, "#Browse-" + fileEntry.getIndex(), (event) -> {
+                addEventListener(EventType.CLICK, "#FileEntry" + fileEntry.getIndex(), (event) -> {
                     // Set the current path
                     setCurrentPath(fileEntry.getFile().toPath());
 
@@ -204,19 +211,16 @@ class FileBrowserPage extends DecoratedDialogPage {
             // If is editable
             if (fileEntry.isEditable()) {
                 // Add an event listener for the edit buttons
-                addEventListener(EventType.CLICK, "#Edit-" + fileEntry.getIndex(), (event) -> {
+                addEventListener(EventType.CLICK, "#FileEntry" + fileEntry.getIndex() + " #EditButton", (event) -> {
                     // Set the current file
                     setCurrentFile(fileEntry);
                 });
             }
         }
-
-        // Add the file list group to the dialog
-        getDialog().setContent(fileListGroup);
     }
 }
 
-class FileBrowserFileEntry extends ComponentBuilder {
+class FileBrowserFileEntry extends FileBrowserLine {
     /**
      * The logger.
      */
@@ -248,7 +252,7 @@ class FileBrowserFileEntry extends ComponentBuilder {
     private String fileName;
 
     public FileBrowserFileEntry(Path filePath, int index) {
-        super("Group");
+        super();
 
         this.filePath = filePath;
         this.file = filePath.toFile();
@@ -266,6 +270,17 @@ class FileBrowserFileEntry extends ComponentBuilder {
                 this.fileType = null;
             }
         }
+
+        setId("FileEntry" + index);
+        setProperty("Padding", Map.of("Full", 10));
+
+        setStyle(Map.of(
+            "Default", Map.of("Background", Color.of("#1a1a1a", 0.5f)),
+            "Hovered", Map.of("Background", Color.of("#1a1a1a", 0.7f)),
+            "Pressed", Map.of("Background", Color.of("#1a1a1a", 0.9f))
+        ));
+
+        initialize();
     }
 
     public FileBrowserFileEntry(Path filePath, int index, String fileName) {
@@ -273,50 +288,47 @@ class FileBrowserFileEntry extends ComponentBuilder {
         this.fileName = fileName;
     }
 
-    @Override
-    public String build() {
-        // Create the file group (the base container)
-        var fileGroup = ComponentFactory.create(Group.class)
-            .setProperty("Padding", Map.of("Full", 10))
-            .setProperty("Background", Color.of("#1a1a1a", 0.5f));
-
-        // Add the file icon to the file group
-        fileGroup.appendChild(createLineLabel(
+    /**
+     * Initialize the file entry.
+     */
+    protected void initialize() {
+        // Add the file icon to the line group
+        fileIconSlot = createLineLabel(
             ComponentFactory.create(Image.class)
                 .setSrc(FileBrowserIconRegistry.getFileIcon(fileType))
                 .setSizes(24)
-        ));
+        );
 
         // Add the file name to the file group
-        fileGroup.appendChild(createLineLabel(getFileName()));
+        fileNameSlot = createLineLabel(getFileName());
 
         // Add the file size to the file group
-        fileGroup.appendChild(createLineLabel(getFileSize()));
+        fileSizeSlot = createLineLabel(getFileSize());
 
         // Add the file last modified date to the file group
-        fileGroup.appendChild(createLineLabel(getFileLastModifiedDate()));
+        fileLastModifiedDateSlot = createLineLabel(getFileLastModifiedDate());
 
         // If is a directory
         if (file.isDirectory()) {
             // Add the browse button to the file group
-            fileGroup.setId("Browse-" + index);
+            setProperty("TooltipText", "Browse this directory");
         } else
         // If is editable
         if (isEditable()) {
             // Add the edit button to the file group
-            fileGroup.appendChild(
-                ComponentFactory.create(HButton.class)
-                    .setIcon(FileBrowserIconRegistry.getIconPath("UI", "Edit.png"))
-                        .setIconHeight(24)
-                        .setIconWidth(24)
-                        .setId("Edit-" + index)
-                        .setProperty("FlexWeight", 1)
+            fileActionSlot = createLineLabel(
+                ComponentFactory.create(Button.class)
+                    .appendChild(
+                        ComponentFactory.create(Image.class)
+                            .setSrc(FileBrowserIconRegistry.getIconPath("UI", "Edit.png"))
+                            .setSizes(24)
+                    )
+                    .setId("EditButton")
+                    .setProperty("TooltipText", "Edit this file")
             );
+        } else {
+            setProperty("TooltipText", "This file is not editable");
         }
-
-        appendChild(fileGroup);
-
-        return super.build();
     }
 
     /**
@@ -333,26 +345,6 @@ class FileBrowserFileEntry extends ComponentBuilder {
      */
     public File getFile() {
         return file;
-    }
-
-    /**
-     * Create a line label.
-     * @param text The text.
-     * @return The line label.
-     */
-    private ComponentBuilder createLineLabel(String text) {
-        return createLineLabel(ComponentFactory.create(Label.class).setText(text));
-    }
-
-    /**
-     * Create a line label.
-     * @param component The component.
-     * @return The line label.
-     */
-    private ComponentBuilder createLineLabel(ComponentBuilder component) {
-        return ComponentFactory.create(Group.class)
-            .setProperty("FlexWeight", 1)
-            .appendChild(component);
     }
 
     /**
@@ -434,5 +426,151 @@ class FileBrowserFileEntry extends ComponentBuilder {
     public FileBrowserFileEntry setIndex(int index) {
         this.index = index;
         return this;
+    }
+}
+
+class FileBrowserLineLabel extends FileBrowserLine {
+    public FileBrowserLineLabel() {
+        super();
+
+        // Create the file name slot
+        fileNameSlot = createLineLabel("Name");
+
+        // Create the file size slot
+        fileSizeSlot = createLineLabel("Size");
+
+        // Create the file last modified date slot
+        fileLastModifiedDateSlot = createLineLabel("Last modified date");
+    }
+}
+
+class FileBrowserLine extends ComponentBuilder {
+    /**
+     * The icon size.
+     */
+    public static final int ICON_SIZE = 24;
+
+    /**
+     * The file name size.
+     */
+    public static final int FILE_NAME_SIZE = 400;
+
+    /**
+     * The file size size.
+     */
+    public static final int FILE_SIZE_SIZE = 100;
+
+    /**
+     * The file last modified date size.
+     */
+    public static final int FILE_LAST_MODIFIED_DATE_SIZE = 250;
+
+    /**
+     * The file action size.
+     */
+    public static final int FILE_ACTION_SIZE = 24;
+
+    /**
+     * Get the total width of the line.
+     * @return The total width of the line.
+     */
+    public static int getTotalWidth() {
+        return ICON_SIZE + FILE_NAME_SIZE + FILE_SIZE_SIZE + FILE_LAST_MODIFIED_DATE_SIZE + FILE_ACTION_SIZE;
+    }
+
+    /**
+     * The line group.
+     */
+    protected Group lineGroup;
+
+    /**
+     * The icon path.
+     */
+    protected ComponentBuilder fileIconSlot;
+
+    /**
+     * The file name slot.
+     */
+    protected ComponentBuilder fileNameSlot;
+
+    /**
+     * The file size slot.
+     */
+    protected ComponentBuilder fileSizeSlot;
+
+    /**
+     * The file last modified date slot.
+     */
+    protected ComponentBuilder fileLastModifiedDateSlot;
+
+    /**
+     * The file action slot.
+     */
+    protected ComponentBuilder fileActionSlot;
+
+    public FileBrowserLine() {
+        super("Button");
+
+        // Create the line group
+        lineGroup = (Group) ComponentFactory.create(Group.class)
+            .setProperty("LayoutMode", LayoutMode.CENTER)
+            .setProperty("Anchor", Map.of("Width", getTotalWidth()));
+    }
+
+    public String build() {
+        lineGroup.appendChild(
+            ComponentFactory.create(Group.class)
+                .setProperty("Anchor", Map.of("Width", ICON_SIZE, "Height", ICON_SIZE))
+                .setProperty("Padding", Map.of("Right", ICON_SIZE / 2))
+                .appendChild(fileIconSlot)
+        );
+
+        lineGroup.appendChild(
+            ComponentFactory.create(Group.class)
+                .setProperty("Anchor", Map.of("Width", FILE_NAME_SIZE))
+                .appendChild(fileNameSlot)
+        );
+
+        lineGroup.appendChild(
+            ComponentFactory.create(Group.class)
+                .setProperty("Anchor", Map.of("Width", FILE_SIZE_SIZE))
+                .appendChild(fileSizeSlot)
+        );
+
+        lineGroup.appendChild(
+            ComponentFactory.create(Group.class)
+                .setProperty("Anchor", Map.of("Width", FILE_LAST_MODIFIED_DATE_SIZE))
+                .appendChild(fileLastModifiedDateSlot)
+        );
+
+        lineGroup.appendChild(
+            ComponentFactory.create(Group.class)
+                .setProperty("Anchor", Map.of("Width", FILE_ACTION_SIZE, "Height", FILE_ACTION_SIZE))
+                .appendChild(fileActionSlot)
+        );
+
+        // Append the line group to the component
+        appendChild(lineGroup);
+
+        return super.build();
+    }
+
+    /**
+     * Create a line label.
+     * @param text The text.
+     * @return The line label.
+     */
+    protected ComponentBuilder createLineLabel(String text) {
+        return createLineLabel(ComponentFactory.create(Label.class).setText(text));
+    }
+
+    /**
+     * Create a line label.
+     * @param component The component.
+     * @return The line label.
+     */
+    protected ComponentBuilder createLineLabel(ComponentBuilder component) {
+        return ComponentFactory.create(Group.class)
+            .appendChild(component);
     }
 }
