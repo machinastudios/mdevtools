@@ -1,24 +1,13 @@
 package com.machina.mdevtools.tasks.modreload;
 
-import java.io.IOException;
 import java.lang.reflect.Field;
-import java.nio.file.FileSystem;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Map;
-import java.util.concurrent.CompletableFuture;
-import java.util.stream.Stream;
 
 import com.hypixel.hytale.common.plugin.PluginIdentifier;
-import com.hypixel.hytale.protocol.packets.setup.AssetFinalize;
-import com.hypixel.hytale.protocol.packets.setup.AssetInitialize;
-import com.hypixel.hytale.protocol.packets.setup.AssetPart;
 import com.hypixel.hytale.server.core.asset.AssetModule;
-import com.hypixel.hytale.server.core.io.PacketHandler;
 import com.hypixel.hytale.server.core.plugin.JavaPlugin;
 import com.hypixel.hytale.server.core.plugin.PluginManager;
-import com.hypixel.hytale.server.core.universe.PlayerRef;
-import com.hypixel.hytale.server.core.universe.Universe;
 import com.machina.shared.factory.ModLogger;
 
 /**
@@ -123,120 +112,10 @@ public final class ModReloadPluginManager {
             return false;
         }
 
-        // Try to get the asset packet
-        // @todo this is returning null, so we will need to load the asset packet first
-        var assetPacket = assetModule.getAssetPack(pluginId.toString());
-
-        // If an asset packet for the plugin was registered
-        if (assetPacket != null) {
-            logger.info("Resending all assets to clients for mod %s", pluginName);
-
-            // Get the asset packet files
-            var assetPacketFileSystem = assetPacket.getFileSystem();
-
-            //resendAllAssetsToClients(assetPacketFileSystem);
-        }
+        // Reload the asset packet
+        ModReloadAssetReload.reloadAssetPacket(pluginId);
         
         logger.info("Mod %s has been reloaded", pluginName);
         return true;
-    }
-
-    /**
-     * Resend all assets to clients
-     * @param assetPacketFileSystem The asset packet file system
-     */
-    private void resendAllAssetsToClients(FileSystem assetPacketFileSystem) {
-        for (Path root : assetPacketFileSystem.getRootDirectories()) {
-            // List the paths
-            try (Stream<Path> paths = Files.list(root)) {
-                // Iterate over the paths
-                for (Path path : paths.toList()) {
-                    // If it's a file
-                    if (Files.isRegularFile(path)) {
-                        // Send the asset to the clients
-                        sendAssetToClients(path);
-                    }
-                }
-            } catch (IOException e) {
-                logger.error("Error listing assets: %t", e);
-            }
-        }
-    }
-
-    /**
-     * Send an asset to the clients
-     * This abuses a packet that is used to send assets to the clients out of the SETUP phase
-     * Idk why this is there, but we will use it until Hytale removes it
-     * @param path The path of the asset
-     */
-    private void sendAssetToClients(Path path) {
-        final byte[] assetBytes;
-
-        try {
-            // Read the asset bytes
-            assetBytes = Files.readAllBytes(path);
-        } catch (IOException e) {
-            logger.error("Error reading asset: %t", e);
-            return;
-        }
-
-        // First, prepare the asset
-        ModAsset modAsset = new ModAsset(path.toString(), assetBytes);
-
-        // Iterate over the players
-        for (PlayerRef player : Universe.get().getPlayers()) {
-            // Get the ref
-            var ref = player.getReference();
-            var store = ref.getStore();
-            var world = store.getExternalData().getWorld();
-
-            // Run in the world thread
-            CompletableFuture.runAsync(() -> {
-                // Get the ref inside the world thread
-                PlayerRef playerRef = store.getComponent(ref, PlayerRef.getComponentType());
-
-                // If playerRef is null
-                if (playerRef == null) {
-                    return;
-                }
-
-                // Get the packet handler
-                PacketHandler packetHandler = playerRef.getPacketHandler();
-
-                // Create the init packet
-                AssetInitialize initPacket = new AssetInitialize(modAsset.toPacket(), assetBytes.length);
-
-                // Send the init packet
-                packetHandler.writeNoCache(initPacket);
-
-                final int maxChunkSize = 4096000;
-                int offset = 0;
-
-                // While the offset is less than the asset bytes length
-                while (offset < assetBytes.length) {
-                    // Get the chunk size
-                    int chunkSize = Math.min(maxChunkSize, assetBytes.length - offset);
-
-                    // Get the chunk
-                    byte[] chunk = new byte[chunkSize];
-
-                    // Copy the chunk
-                    System.arraycopy(assetBytes, offset, chunk, 0, chunkSize);
-                    
-                    // Create the part packet
-                    AssetPart partPacket = new AssetPart(chunk);
-
-                    // Send the part packet
-                    packetHandler.writeNoCache(partPacket);
-                    
-                    // Update the offset
-                    offset += chunkSize;
-                }
-
-                // Send the finalize packet
-                AssetFinalize finalizePacket = new AssetFinalize();
-                packetHandler.writeNoCache(finalizePacket);
-            }, world);
-        }
     }
 }
