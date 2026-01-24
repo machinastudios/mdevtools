@@ -20,6 +20,9 @@
         <project.author.url>https://github.com/machinastudios</project.author.url>
         <project.url>https://github.com/machinastudios/mdevtools</project.url>
 
+        <hytale.server.version>2026.01.23-6e2d4fc36</hytale.server.version>
+        <hytale.server.repository>https://maven.hytale.com/pre-release</hytale.server.repository>
+
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <maven.compiler.source>16</maven.compiler.source>
         <maven.compiler.target>16</maven.compiler.target>
@@ -57,11 +60,18 @@
         <dependency>
             <groupId>com.hypixel.hytale</groupId>
             <artifactId>Server</artifactId>
-            <version>1.0.0</version>
-            <scope>system</scope>
-            <systemPath>${project.basedir}/lib/HytaleServer.jar</systemPath>
+            <version>${hytale.server.version}</version>
+            <scope>provided</scope>
         </dependency>
     </dependencies>
+
+    <!-- Add the Hytale release repository -->
+    <repositories>
+        <repository>
+            <id>hytale-release</id>
+            <url>${hytale.server.repository}</url>
+        </repository>
+    </repositories>
 
     <build>
        <resources>
