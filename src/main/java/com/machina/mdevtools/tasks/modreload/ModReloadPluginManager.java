@@ -9,6 +9,7 @@ import com.hypixel.hytale.server.core.asset.AssetModule;
 import com.hypixel.hytale.server.core.plugin.JavaPlugin;
 import com.hypixel.hytale.server.core.plugin.PluginManager;
 import com.machina.shared.factory.ModLogger;
+import com.machina.shared.util.ModJarUtils;
 
 /**
  * Utility class for plugin management operations during mod reload.
@@ -72,15 +73,21 @@ public final class ModReloadPluginManager {
      * @param pluginName The plugin name for logging
      * @return True if successful, false otherwise
      */
-    public boolean loadPlugin(PluginIdentifier pluginId, String pluginName) {
-        logger.info("Mod %s is not loaded yet, will be loaded", pluginName);
+    public boolean loadPlugin(PluginIdentifier pluginId, ModJarUtils.ModManifest manifest) {
+        logger.info("Mod %s is not loaded yet, will be loaded", manifest.Name);
+
+        // We can only load the plugin if it has a Main class
+        if (manifest.Main == null) {
+            logger.info("Mod %s does not have a Main class, skipping the loading process", manifest.Name);
+            return true;
+        }
 
         // Load the plugin
         if (PluginManager.get().load(pluginId)) {
-            logger.info("Mod %s has been loaded", pluginName);
+            logger.info("Mod %s has been loaded", manifest.Name);
             return true;
         } else {
-            logger.error("Failed to load mod %s", pluginName);
+            logger.error("Failed to load mod %s", manifest.Name);
             return false;
         }
     }
@@ -88,10 +95,10 @@ public final class ModReloadPluginManager {
     /**
      * Reload a plugin
      * @param pluginId The plugin identifier
-     * @param pluginName The plugin name for logging
+     * @param manifest The plugin manifest
      * @return True if successful, false otherwise
      */
-    public boolean reloadPlugin(PluginIdentifier pluginId, String pluginName) {
+    public boolean reloadPlugin(PluginIdentifier pluginId, ModJarUtils.ModManifest manifest) {
         // Get the asset module
         var assetModule = AssetModule.get();
         var assetPacketExists = assetModule.getAssetPack(pluginId.toString()) != null;
@@ -99,23 +106,26 @@ public final class ModReloadPluginManager {
         // If an asset packet for the plugin is already registered, unregister it
         // Idk why Hytale isn't doing this automatically
         if (assetPacketExists) {
-            logger.info("Unregistering asset packet for mod %s", pluginName);
+            logger.info("Unregistering asset packet for mod %s", manifest.Name);
             logger.info("This will cause some erros in the console, please ignore them, they're harmless");
 
             // This will cause some erros in the console, but it's necessary
             assetModule.unregisterPack(pluginId.toString());
         }
 
-        // Reload the plugin
-        if (!PluginManager.get().reload(pluginId)) {
-            logger.error("Failed to reload mod %s", pluginName);
-            return false;
+        // We can only reload the plugin if it has a Main class
+        if (manifest.Main != null) {
+            // Reload the plugin
+            if (!PluginManager.get().reload(pluginId)) {
+                logger.error("Failed to reload mod %s", manifest.Name);
+                return false;
+            }
         }
 
-        // Reload the asset packet
-        ModReloadAssetReload.reloadAssetPacket(pluginId);
+        // Reload the asset pack
+        ModReloadAssetReload.reloadAssetPack(pluginId);
         
-        logger.info("Mod %s has been reloaded", pluginName);
+        logger.info("Mod %s has been reloaded", manifest.Name);
         return true;
     }
 }

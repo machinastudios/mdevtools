@@ -96,7 +96,7 @@ public final class ModReloadFileHandler {
 
             // Ignore if the plugin is not found
             if (existingPlugin == null) {
-                if (!pluginManager.loadPlugin(pluginId, pluginName)) {
+                if (!pluginManager.loadPlugin(pluginId, manifest)) {
                     PlayerUtil.sendMessageWithPermission(
                         Message.raw("Failed to load mod " + pluginName),
                         "mdevtools.command.plugin.reload"
@@ -105,7 +105,7 @@ public final class ModReloadFileHandler {
                     return ModReloadResult.error("Failed to load mod");
                 }
             } else {
-                if (!pluginManager.reloadPlugin(pluginId, pluginName)) {
+                if (!pluginManager.reloadPlugin(pluginId, manifest)) {
                     PlayerUtil.sendMessageWithPermission(
                         Message.raw("Failed to reload mod " + pluginName),
                         "mdevtools.command.plugin.reload"

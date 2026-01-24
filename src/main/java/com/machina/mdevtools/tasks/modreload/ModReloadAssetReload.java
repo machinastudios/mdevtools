@@ -9,18 +9,16 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.CompletableFuture;
 
 import com.hypixel.hytale.assetstore.AssetRegistry;
 import com.hypixel.hytale.assetstore.AssetStore;
 import com.hypixel.hytale.common.plugin.PluginIdentifier;
-import com.hypixel.hytale.protocol.packets.setup.AssetFinalize;
-import com.hypixel.hytale.protocol.packets.setup.AssetInitialize;
-import com.hypixel.hytale.protocol.packets.setup.AssetPart;
+import com.hypixel.hytale.protocol.packets.setup.RequestCommonAssetsRebuild;
 import com.hypixel.hytale.server.core.Message;
 import com.hypixel.hytale.server.core.asset.AssetModule;
 import com.hypixel.hytale.server.core.asset.AssetRegistryLoader;
-import com.hypixel.hytale.server.core.io.PacketHandler;
+import com.hypixel.hytale.server.core.asset.common.CommonAssetModule;
+import com.hypixel.hytale.server.core.asset.common.CommonAssetRegistry;
 import com.hypixel.hytale.server.core.universe.PlayerRef;
 import com.hypixel.hytale.server.core.universe.Universe;
 import com.machina.mdevtools.Main;
@@ -32,10 +30,10 @@ public class ModReloadAssetReload {
     private static final ModLogger logger = ModLogger.forMod(Main.INSTANCE, "ModReloadAssetReload");
 
     /**
-     * Resend all assets to clients
-     * @param assetPacketFileSystem The asset packet file system
+     * Reload and resend all assets to clients.
+     * @param pluginId The plugin identifier
      */
-    public static void reloadAssetPacket(PluginIdentifier pluginId) {
+    public static void reloadAssetPack(PluginIdentifier pluginId) {
         // Get the asset module
         AssetModule assetModule = AssetModule.get();
 
@@ -49,29 +47,18 @@ public class ModReloadAssetReload {
             return;
         }
 
-        // Get the asset store map
-        var immutableAssetStoreMap = AssetRegistry.getStoreMap();
-
         // Declare variables that will be used later
         Map<Object, AssetStore<?, ?, ?>> assetStoreMap;
-        Map<?, ?> tagMap;
-        Map<?, ?> clientTagMap;
 
         try {
             // Get the fields we need to access
             Field storeMapField = AssetRegistry.class.getDeclaredField("storeMap");
-            Field tagMapField = AssetRegistry.class.getDeclaredField("TAG_MAP");
-            Field clientTagMapField = AssetRegistry.class.getDeclaredField("CLIENT_TAG_MAP");
 
             // Set the fields to accessible
             storeMapField.setAccessible(true);
-            tagMapField.setAccessible(true);
-            clientTagMapField.setAccessible(true);
 
             // Get the values from the fields
             assetStoreMap = (Map<Object, AssetStore<?, ?, ?>>) storeMapField.get(AssetRegistry.class);
-            tagMap = (Map<?, ?>) tagMapField.get(AssetRegistry.class);
-            clientTagMap = (Map<?, ?>) clientTagMapField.get(AssetRegistry.class);
         } catch (NoSuchFieldException | IllegalAccessException e) {
             logger.error("Error getting the asset store map: %t", e);
             return;
@@ -136,6 +123,9 @@ public class ModReloadAssetReload {
         // Add the "Common" directory to the list
         pathesToCheckList.add("Common");
 
+        // Add the "Cosmetics" directory to the list
+        pathesToCheckList.add("Cosmetics");
+
         logger.debug("The following paths will be checked for assets: %s", String.join(", ", pathesToCheckList));
 
         // Convert the list of paths to check to a list of absolute paths
@@ -174,118 +164,162 @@ public class ModReloadAssetReload {
 
     /**
      * Send the assets to the clients
-     * @param assetPath The path of the asset
+     * @param modAssetList The list of assets to send
      * @param pluginId The plugin identifier
      */
     private static void sendAssetsToClients(List<Path> modAssetList, PluginIdentifier pluginId) {
         logger.info("Sending %d assets to the clients", modAssetList.size());
 
-        // Iterate over the files to send
+        // Separate Common assets from Server assets
+        // Common assets include: Common/, Cosmetics/
+        // Server assets include: Server/
+        List<Path> commonAssets = new ArrayList<>();
+        List<Path> serverAssets = new ArrayList<>();
+        
+        String separator = Path.of("").getFileSystem().getSeparator();
         for (Path file : modAssetList) {
-            // Send the asset to the clients
-            sendAssetToClients(file, pluginId);
+            String pathStr = file.toString();
+            if (pathStr.contains("Common" + separator) || pathStr.contains("/Common/") ||
+                pathStr.contains("Cosmetics" + separator) || pathStr.contains("/Cosmetics/")) {
+                commonAssets.add(file);
+            } else {
+                serverAssets.add(file);
+            }
         }
 
+        logger.info(
+            "Found %d Common assets (Common + Cosmetics) and %d Server assets", 
+            commonAssets.size(), serverAssets.size()
+        );
+
+        if (!commonAssets.isEmpty()) {
+            logger.info(
+                "Registering %d Common assets (Common + Cosmetics) using CommonAssetModule", 
+                commonAssets.size()
+            );
+
+            registerCommonAssets(commonAssets, pluginId);
+        }
+
+        if (!modAssetList.isEmpty()) {
+            logger.info("Sending RequestCommonAssetsRebuild to all clients");
+
+            // Use the `broadcastPacketNoCache` method to send the packet to all clients
+            Universe.get().broadcastPacketNoCache(new RequestCommonAssetsRebuild());
+            
+            logger.info("Sent RequestCommonAssetsRebuild to all clients");
+
+        }
+
+        // Notify the players that the common assets have been reloaded
+        if (!commonAssets.isEmpty()) {
+            for (PlayerRef player : Universe.get().getPlayers()) {
+                if (PlayerUtil.isOp(player)) {
+                    PlayerUtil.sendPluginMessage(
+                        player,
+                        Main.INSTANCE,
+                        Message.raw("Common assets reloaded.").color(Colors.LIGHT_GRAY)
+                    );
+                }
+            }
+        }
+        
         logger.info("Assets sent to the clients");
     }
 
     /**
-     * Send an asset to the clients
-     * This abuses a packet that is used to send assets to the clients out of the SETUP phase
-     * Idk why this is there, but we will use it until Hytale removes it
-     * @param path The path of the asset
+     * Register Common assets using the official Hytale system.
+     * This is the correct way to reload CommonAssets (Models, Textures, Particles, Cosmetics, etc.)
+     * 
+     * CommonAssets are files from Common/ and Cosmetics/ directories.
+     * 
+     * IMPORTANT: This method REMOVES the old asset before adding the new one to force Hytale
+     * to treat it as a new asset, even if the hash didn't change. This ensures the asset is
+     * always sent to clients and reloaded properly.
+     * 
+     * @param commonAssets List of Common asset paths (from Common/ and Cosmetics/)
      * @param pluginId The plugin identifier
      */
-    private static void sendAssetToClients(Path path, PluginIdentifier pluginId) {
-        final byte[] assetBytes;
-
-        try {
-            // Read the asset bytes
-            assetBytes = Files.readAllBytes(path);
-        } catch (IOException e) {
-            logger.error("Error reading asset: %t", e);
+    private static void registerCommonAssets(List<Path> commonAssets, PluginIdentifier pluginId) {
+        // Get the asset pack root once
+        AssetModule assetModule = AssetModule.get();
+        var assetPack = assetModule.getAssetPack(pluginId.toString());
+        if (assetPack == null) {
+            logger.error("Asset pack not found for plugin %s", pluginId.toString());
             return;
         }
-
-        // Normalize the path
-        var normalizedPath = path.toString().replace("^/", "");
-
-        // First, prepare the asset
-        // Remove the leading "/" from the path
-        ModAsset modAsset = new ModAsset(normalizedPath, assetBytes);
-
-        // Iterate over the players
-        for (PlayerRef player : Universe.get().getPlayers()) {
-            // Get the ref
-            var ref = player.getReference();
-            var store = ref.getStore();
-            var world = store.getExternalData().getWorld();
-
-            // Run in the world thread
-            CompletableFuture.runAsync(() -> {
-                // Get the ref inside the world thread
-                PlayerRef playerRef = store.getComponent(ref, PlayerRef.getComponentType());
-
-                // If playerRef is null
-                if (playerRef == null) {
-                    return;
+        
+        Path root = assetPack.getRoot();
+        logger.debug("Asset pack root: %s", root.toAbsolutePath());
+        
+        for (Path assetPath : commonAssets) {
+            try {
+                // Read the asset bytes
+                byte[] assetBytes = Files.readAllBytes(assetPath);
+                
+                // Calculate relative path from pack root
+                // The path should start with Common/, Cosmetics/, etc.
+                Path relativePath = root.relativize(assetPath);
+                String normalizedPath = relativePath.toString().replace("\\", "/");
+                
+                // Debug: Log the paths being used
+                logger.debug("Absolute path: %s", assetPath.toAbsolutePath());
+                logger.debug("Root path: %s", root.toAbsolutePath());
+                logger.debug("Relative path (raw): %s", normalizedPath);
+                
+                // FIX: Remove plugin identifier from path if present
+                // Sometimes the path includes the plugin name like "com.machina:mauth/Common/..."
+                // We need to strip that and keep only "Common/..." or "Cosmetics/..."
+                String pluginPrefix = pluginId.toString() + "/";
+                if (normalizedPath.startsWith(pluginPrefix)) {
+                    normalizedPath = normalizedPath.substring(pluginPrefix.length());
+                    logger.debug("Stripped plugin prefix, new path: %s", normalizedPath);
                 }
-
-                // If player is OP
-                if (PlayerUtil.isOp(playerRef)) {
-                    PlayerUtil.sendPluginMessage(
-                        playerRef,
-                        Main.INSTANCE,
-                        Message.raw("Receiving asset: " + normalizedPath + " from mod " + pluginId.toString()).color(Colors.LIGHT_GRAY)
-                    );
+                
+                // Extract only the part starting from Common/, Cosmetics/, or Server/
+                if (normalizedPath.contains("/Common/")) {
+                    normalizedPath = "Common/" + normalizedPath.substring(normalizedPath.indexOf("/Common/") + 8);
+                    logger.debug("Extracted Common path: %s", normalizedPath);
+                } else if (normalizedPath.contains("/Cosmetics/")) {
+                    normalizedPath = "Cosmetics/" + normalizedPath.substring(normalizedPath.indexOf("/Cosmetics/") + 11);
+                    logger.debug("Extracted Cosmetics path: %s", normalizedPath);
+                } else if (!normalizedPath.startsWith("Common/") && 
+                           !normalizedPath.startsWith("Cosmetics/")) {
+                    logger.warn("Asset path doesn't start with Common/ or Cosmetics/: %s", normalizedPath);
+                    logger.warn("This might cause issues. Expected format: Common/UI/test.ui");
                 }
-
-                // Get the packet handler
-                PacketHandler packetHandler = playerRef.getPacketHandler();
-
-                // Create the init packet
-                AssetInitialize initPacket = new AssetInitialize(modAsset.toPacket(), assetBytes.length);
-
-                // Send the init packet
-                packetHandler.writeNoCache(initPacket);
-
-                final int maxChunkSize = 4096000;
-                int offset = 0;
-
-                // While the offset is less than the asset bytes length
-                while (offset < assetBytes.length) {
-                    // Get the chunk size
-                    int chunkSize = Math.min(maxChunkSize, assetBytes.length - offset);
-
-                    // Get the chunk
-                    byte[] chunk = new byte[chunkSize];
-
-                    // Copy the chunk
-                    System.arraycopy(assetBytes, offset, chunk, 0, chunkSize);
-                    
-                    // Create the part packet
-                    AssetPart partPacket = new AssetPart(chunk);
-
-                    // Send the part packet
-                    packetHandler.writeNoCache(partPacket);
-                    
-                    // Update the offset
-                    offset += chunkSize;
+                
+                logger.info("Final asset path: %s", normalizedPath);
+                
+                // CRITICAL FIX: Remove the old asset first to force Hytale to treat it as new
+                // If we don't do this, CommonAssetModule.addCommonAsset() will check if the hash
+                // changed, and if it didn't, it won't send the asset to clients.
+                // By removing first, we force it to always be treated as a "new" asset.
+                var removed = CommonAssetRegistry.removeCommonAssetByName(pluginId.toString(), normalizedPath);
+                if (removed != null) {
+                    logger.debug("Removed old asset: %s", normalizedPath);
+                } else {
+                    logger.debug("No old asset to remove: %s (this is a new asset)", normalizedPath);
                 }
-
-                // Send the finalize packet
-                AssetFinalize finalizePacket = new AssetFinalize();
-                packetHandler.writeNoCache(finalizePacket);
-
-                // If player is OP
-                if (PlayerUtil.isOp(playerRef)) {
-                    PlayerUtil.sendPluginMessage(
-                        playerRef,
-                        Main.INSTANCE, 
-                        Message.raw("Received asset: " + normalizedPath + " from mod " + pluginId.toString()).color(Colors.LIGHT_GRAY)
-                    );
-                }
-            }, world);
+                
+                // Create ModAsset (which extends CommonAsset)
+                ModAsset modAsset = new ModAsset(normalizedPath, assetBytes);
+                
+                // Register using the official Hytale method
+                // This will:
+                // - Add to CommonAssetRegistry
+                // - Invalidate caches
+                // - Send to clients automatically (because we removed the old one, it's always "new")
+                // NOTE: sendAsset() is called with forceRebuild: false, so it WON'T send
+                // RequestCommonAssetsRebuild automatically. We'll send it manually later.
+                CommonAssetModule.get().addCommonAsset(pluginId.toString(), modAsset, true);
+                
+                logger.info("Registered Common asset: %s (hash: %s)", normalizedPath, modAsset.getHash());
+            } catch (IOException e) {
+                logger.error("Error reading Common asset %s: %t", assetPath, e);
+            } catch (Exception e) {
+                logger.error("Unexpected error registering asset %s: %t", assetPath, e);
+            }
         }
     }
 }
