@@ -11,7 +11,7 @@ public class LogCleanupTask extends Task {
      * The log cleanup task constructor
      */
     public LogCleanupTask() {
-        super("LogCleanupTask", "Cleans up logs and lock files on startup", "logs.cleanupOnStartup");
+        super("LogCleanupTask", "Cleans up logs and lock files on startup", "logs.cleanupOnStartup.enabled");
     }
 
     @Override

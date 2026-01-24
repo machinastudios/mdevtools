@@ -111,13 +111,13 @@ public class Main extends SuperPlugin {
      * Load the configuration
      */
     private void loadConfig() {
-        config.addDefault("logs.cleanupOnStartup", true, "Whether to cleanup logs and lock files on startup");
+        config.addDefault("logs.cleanupOnStartup.enabled", true, "Whether to cleanup logs and lock files on startup");
 
-        config.addDefault("logs.global.level", "INFO", "The log level to set for all loggers");
+        config.addDefault("logs.global.level", "INFO", "The log level to set for all loggers. Set null to ignore\nAccepted values: FINEST, FINER, FINE, TRACE, DEBUG, INFO, WARNING, SEVERE, OFF");
         config.addDefault("logs.global.skip", List.of("PacketLogging", "WorldChunk"), "The loggers to skip when setting the log level");
 
-        config.addDefault("mods.reloadDelayMs", 1000, "Delay in milliseconds before reloading a mod after it's detected (to ensure file is fully written)");
-        config.addDefault("mods.fileStabilityCheckMs", 500, "Time in milliseconds to wait checking if file size is stable before reloading");
+        config.addDefault("mods.reload.delayMs", 1000, "Delay in milliseconds before reloading a mod after it's detected (to ensure file is fully written)");
+        config.addDefault("mods.reload.fileStabilityCheckMs", 500, "Time in milliseconds to wait checking if file size is stable before reloading");
 
         config.addDefault("mods.reload.enabled", true, "Whether to automatically reload mods when they are updated");
         config.addDefault("mods.reload.additionalDirectories", List.of(), "Additional directories to watch for mods updates");

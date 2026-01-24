@@ -1,10 +1,12 @@
 package com.machina.mdevtools.tasks.modreload;
 
 import java.io.IOException;
+import java.lang.reflect.Field;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
@@ -47,18 +49,84 @@ public class ModReloadAssetReload {
             return;
         }
 
+        // Get the asset store map
+        var immutableAssetStoreMap = AssetRegistry.getStoreMap();
+
+        // Declare variables that will be used later
+        Map<Object, AssetStore<?, ?, ?>> assetStoreMap;
+        Map<?, ?> tagMap;
+        Map<?, ?> clientTagMap;
+
+        try {
+            // Get the fields we need to access
+            Field storeMapField = AssetRegistry.class.getDeclaredField("storeMap");
+            Field tagMapField = AssetRegistry.class.getDeclaredField("TAG_MAP");
+            Field clientTagMapField = AssetRegistry.class.getDeclaredField("CLIENT_TAG_MAP");
+
+            // Set the fields to accessible
+            storeMapField.setAccessible(true);
+            tagMapField.setAccessible(true);
+            clientTagMapField.setAccessible(true);
+
+            // Get the values from the fields
+            assetStoreMap = (Map<Object, AssetStore<?, ?, ?>>) storeMapField.get(AssetRegistry.class);
+            tagMap = (Map<?, ?>) tagMapField.get(AssetRegistry.class);
+            clientTagMap = (Map<?, ?>) clientTagMapField.get(AssetRegistry.class);
+        } catch (NoSuchFieldException | IllegalAccessException e) {
+            logger.error("Error getting the asset store map: %t", e);
+            return;
+        }
+
+        // Get the root path of the asset pack
+        var root = assetPack.getRoot();
+
+        // Unregister existing assets
+        var modAssets = getModAssetList(root, pluginId);
+
+        // If the list is not empty, unregister the assets
+        if (modAssets != null && !modAssets.isEmpty()) {
+            logger.debug("assetStoreMap: %s", Arrays.toString(assetStoreMap.values().stream().map(value -> value.getPath()).toArray()));
+
+            for (Path asset : modAssets) {
+                // Remove the asset from the asset store map
+                assetStoreMap.values().removeIf(value -> {
+                    var assetAsString = asset.toString();
+
+                    // If the asset path is the same as the asset path we are trying to remove
+                    if (value.getPath().equals(assetAsString)) {
+                        logger.debug("Unregistering asset %s", assetAsString);
+                        return true;
+                    }
+
+                    return false;
+                });
+            }
+        }
+
         // Load the assets
+        // We need to send the new assets to the clients before we load them
         // `event` can be null, and Hytale will handle it correctly
         AssetRegistryLoader.loadAssets(null, assetPack);
 
-        // Get the asset store map
-        var assetStoremap = AssetRegistry.getStoreMap();
+        // Send the assets to the clients
+        sendAssetsToClients(modAssets, pluginId);
+    }
 
+    /**
+     * Get the assets from the path
+     * @param assetPath The path of the asset
+     * @param pluginId The plugin identifier
+     * @return The list of assets, or null if no assets were found
+     */
+    private static List<Path> getModAssetList(Path assetPath, PluginIdentifier pluginId) {
         // List of paths to check
         List<String> pathesToCheckList = new ArrayList<>();
 
-        // Iterate over the asset store map
-        for (Map.Entry<?, AssetStore<?, ?, ?>> entry : assetStoremap.entrySet()) {
+        // Get the immutable asset store map
+        var immutableAssetStoreMap = AssetRegistry.getStoreMap();
+
+        // Iterate over the immutable asset store map
+        for (Map.Entry<?, AssetStore<?, ?, ?>> entry : immutableAssetStoreMap.entrySet()) {
             pathesToCheckList.add(entry.getValue().getPath());
         }
 
@@ -70,41 +138,15 @@ public class ModReloadAssetReload {
 
         logger.debug("The following paths will be checked for assets: %s", String.join(", ", pathesToCheckList));
 
-        // Get the root path of the asset pack
-        var root = assetPack.getRoot();
+        // Convert the list of paths to check to a list of absolute paths
+        List<Path> absolutePathesToCheckList = pathesToCheckList.stream().map(path -> assetPath.resolve(path)).toList();
 
-        // Check only the valid for the mod itself
-        for (String path : pathesToCheckList) {
-            // Resolve the asset path
-            Path assetPath = root.resolve(path);
-
-            logger.debug("Checking the path %s", assetPath.toString());
-
-            // If the path is not a directory, continue
-            if (!Files.isDirectory(assetPath, new LinkOption[0])) {
-                logger.debug("The path %s is not a directory, skipping", assetPath.toString());
-                continue;
-            }
-
-            logger.debug("The path %s is a directory, sending assets to the clients", assetPath.toString());
-
-            // Send the asset to the clients
-            sendAssetsToClients(assetPath, pluginId);
-        }
-    }
-
-    /**
-     * Send the assets to the clients
-     * @param assetPath The path of the asset
-     * @param pluginId The plugin identifier
-     */
-    private static void sendAssetsToClients(Path assetPath, PluginIdentifier pluginId) {
         try {
             // List all files including subdirectories
             List<Path> files = Files.walk(assetPath).toList();
 
             // List of assets to send
-            List<Path> filesToSend = new ArrayList<>();
+            List<Path> modAssetList = new ArrayList<>();
 
             // Iterate over the files
             for (Path file : files) {
@@ -113,23 +155,38 @@ public class ModReloadAssetReload {
                     continue;
                 }
 
-                // Send the asset to the clients
-                filesToSend.add(file);
+                // If the path is not in the list of paths to check, continue
+                if (!absolutePathesToCheckList.stream().anyMatch(path -> file.toAbsolutePath().startsWith(path))) {
+                    continue;
+                }
+
+                // Add the file to the list of files to send
+                modAssetList.add(file);
             }
 
-            logger.info("Sending %d assets to the clients", filesToSend.size());
-
-            // Iterate over the files to send
-            // DO NOT do this inside the loop above, it will lock the world thread
-            for (Path file : filesToSend) {
-                // Send the asset to the clients
-                sendAssetToClients(file, pluginId);
-            }
-
-            logger.info("Assets sent to the clients");
+            return modAssetList;
         } catch (IOException e) {
             logger.error("Error listing files: %t", e);
         }
+        
+        return null;
+    }
+
+    /**
+     * Send the assets to the clients
+     * @param assetPath The path of the asset
+     * @param pluginId The plugin identifier
+     */
+    private static void sendAssetsToClients(List<Path> modAssetList, PluginIdentifier pluginId) {
+        logger.info("Sending %d assets to the clients", modAssetList.size());
+
+        // Iterate over the files to send
+        for (Path file : modAssetList) {
+            // Send the asset to the clients
+            sendAssetToClients(file, pluginId);
+        }
+
+        logger.info("Assets sent to the clients");
     }
 
     /**
@@ -137,6 +194,7 @@ public class ModReloadAssetReload {
      * This abuses a packet that is used to send assets to the clients out of the SETUP phase
      * Idk why this is there, but we will use it until Hytale removes it
      * @param path The path of the asset
+     * @param pluginId The plugin identifier
      */
     private static void sendAssetToClients(Path path, PluginIdentifier pluginId) {
         final byte[] assetBytes;

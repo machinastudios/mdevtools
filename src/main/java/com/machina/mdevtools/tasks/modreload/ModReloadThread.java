@@ -282,10 +282,10 @@ public class ModReloadThread extends Thread {
         if (!configInitialized && Main.INSTANCE != null && Main.INSTANCE.config != null) {
             try {
                 // Get the reload delay duration
-                reloadDelayMs = Main.INSTANCE.config.getLong("mods.reloadDelayMs", 1000);
+                reloadDelayMs = Main.INSTANCE.config.getLong("mods.reload.delayMs", 1000);
 
                 // Get the file stability check duration
-                fileStabilityCheckMs = Main.INSTANCE.config.getLong("mods.fileStabilityCheckMs", 500);
+                fileStabilityCheckMs = Main.INSTANCE.config.getLong("mods.reload.fileStabilityCheckMs", 500);
 
                 // Set the configuration initialized flag
                 configInitialized = true;

@@ -35,25 +35,24 @@ public class LogLevelTask extends Task {
     }
 
     /**
+     * Check if the log level task is enabled
+     * @param defaultValue The default value to return if the log level is not set
+     * @return True if the log level task is enabled, false otherwise
+     */
+    public boolean isEnabled(boolean defaultValue) {
+        return super.isEnabled(defaultValue) && getLogLevel() != null;
+    }
+
+    /**
      * Start the log level task
      */
     @Override
    public void start() {
-        // Get the log level from the configuration
-        String logLevel = Main.INSTANCE.config.getString("logs.global.level", "INFO");
-
         // Get the loggers to skip from the configuration
         loggersToSkip = Main.INSTANCE.config.getStringList("logs.global.skip", List.of());
 
         // Parse the log level
-        Level newLevel;
-
-        try {
-            newLevel = Level.parse(logLevel);
-        } catch (IllegalArgumentException e) {
-            logger.error("Invalid log level: %s", logLevel, e);
-            return;
-        }
+        Level newLevel = getLogLevel();
 
         try {
             // Get the cached loggers field
@@ -77,6 +76,21 @@ public class LogLevelTask extends Task {
             }
         } catch (Exception e) {
             logger.error("Failed to set the log level", e);
+        }
+    }
+
+    /**
+     * Get the log level from the configuration
+     * @return The log level
+     */
+    private Level getLogLevel() {
+        String logLevel = Main.INSTANCE.config.getString("logs.global.level", "INFO");
+
+        try {
+            return Level.parse(logLevel);
+        } catch (IllegalArgumentException e) {
+            logger.error("Invalid log level: %s", logLevel, e);
+            return Level.INFO;
         }
     }
 }
