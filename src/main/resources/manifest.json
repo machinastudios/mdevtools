@@ -1,17 +1,17 @@
 {
-  "Group": "com.machina",
-  "Name": "mdevtools",
-  "Version": "1.0.0",
-  "Description": "Development tools for Hytale modders and servers",
-  "Main": "com.machina.mdevtools.Main",
+  "Group": "@{project.groupId}",
+  "Name": "@{project.artifactId}",
+  "Version": "@{project.version}",
+  "Description": "@{project.description}",
+  "Main": "@{project.mainClass}",
   "Authors": [
     {
-      "Name": "Machina Studios",
-      "Email": "machina@hytalento.com",
-      "Url": "https://hytalento.com"
+      "Name": "@{project.author.name}",
+      "Email": "@{project.author.email}",
+      "Url": "@{project.author.url}"
     }
   ],
-  "Website": "https://hytalento.com",
+  "Website": "@{project.url}",
   "ServerVersion": "*",
   "DisabledByDefault": false,
   "IncludesAssetPack": false

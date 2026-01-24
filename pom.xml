@@ -14,6 +14,12 @@
     <description>Development tools for Hytale servers</description>
 
     <properties>
+        <project.mainClass>com.machina.mdevtools.Main</project.mainClass>
+        <project.author.name>Machina Studios</project.author.name>
+        <project.author.email>machina@hytalento.com</project.author.email>
+        <project.author.url>https://github.com/machinastudios</project.author.url>
+        <project.url>https://github.com/machinastudios/mdevtools</project.url>
+
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <maven.compiler.source>16</maven.compiler.source>
         <maven.compiler.target>16</maven.compiler.target>
@@ -58,6 +64,20 @@
     </dependencies>
 
     <build>
+       <resources>
+            <!-- To replace the values in the manifest.json file with the project properties -->
+            <resource>
+                <directory>src/main/resources</directory>
+                <filtering>true</filtering>
+
+                <delimiters>
+                    <delimiter>@{*}</delimiter>
+                </delimiters>
+
+                <useDefaultDelimiters>false</useDefaultDelimiters>
+            </resource>
+        </resources>
+
         <plugins>
             <!-- Maven Compiler Plugin -->
             <plugin>
@@ -127,7 +147,6 @@
                     </execution>
                 </executions>
             </plugin>
-
         </plugins>
     </build>
 </project>
