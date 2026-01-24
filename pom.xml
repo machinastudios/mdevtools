@@ -69,12 +69,6 @@
             <resource>
                 <directory>src/main/resources</directory>
                 <filtering>true</filtering>
-
-                <delimiters>
-                    <delimiter>@{*}</delimiter>
-                </delimiters>
-
-                <useDefaultDelimiters>false</useDefaultDelimiters>
             </resource>
         </resources>
 
@@ -88,6 +82,19 @@
                     <source>${maven.compiler.source}</source>
                     <target>${maven.compiler.target}</target>
                     <encoding>UTF-8</encoding>
+                </configuration>
+            </plugin>
+
+            <!-- Maven Resources Plugin -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-resources-plugin</artifactId>
+                <version>3.4.0</version>
+                <configuration>
+                    <delimiters>
+                        <delimiter>@{*}</delimiter>
+                    </delimiters>
+                    <useDefaultDelimiters>false</useDefaultDelimiters>
                 </configuration>
             </plugin>
 

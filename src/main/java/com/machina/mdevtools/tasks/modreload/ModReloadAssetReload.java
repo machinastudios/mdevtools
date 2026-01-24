@@ -65,8 +65,10 @@ public class ModReloadAssetReload {
         // Add the "Server" directory to the list
         pathesToCheckList.add("Server");
 
-        // Find the asset store for the plugin
-        List<Path> assetPaths = new ArrayList<>();
+        // Add the "Common" directory to the list
+        pathesToCheckList.add("Common");
+
+        logger.debug("The following paths will be checked for assets: %s", String.join(", ", pathesToCheckList));
 
         // Get the root path of the asset pack
         var root = assetPack.getRoot();
@@ -76,10 +78,15 @@ public class ModReloadAssetReload {
             // Resolve the asset path
             Path assetPath = root.resolve(path);
 
+            logger.debug("Checking the path %s", assetPath.toString());
+
             // If the path is not a directory, continue
             if (!Files.isDirectory(assetPath, new LinkOption[0])) {
+                logger.debug("The path %s is not a directory, skipping", assetPath.toString());
                 continue;
             }
+
+            logger.debug("The path %s is a directory, sending assets to the clients", assetPath.toString());
 
             // Send the asset to the clients
             sendAssetsToClients(assetPath, pluginId);
@@ -142,8 +149,12 @@ public class ModReloadAssetReload {
             return;
         }
 
+        // Normalize the path
+        var normalizedPath = path.toString().replace("^/", "");
+
         // First, prepare the asset
-        ModAsset modAsset = new ModAsset(path.toString(), assetBytes);
+        // Remove the leading "/" from the path
+        ModAsset modAsset = new ModAsset(normalizedPath, assetBytes);
 
         // Iterate over the players
         for (PlayerRef player : Universe.get().getPlayers()) {
@@ -167,7 +178,7 @@ public class ModReloadAssetReload {
                     PlayerUtil.sendPluginMessage(
                         playerRef,
                         Main.INSTANCE,
-                        Message.raw("Receiving asset: " + path.toString() + " from mod " + pluginId.toString()).color(Colors.LIGHT_GRAY)
+                        Message.raw("Receiving asset: " + normalizedPath + " from mod " + pluginId.toString()).color(Colors.LIGHT_GRAY)
                     );
                 }
 
@@ -213,7 +224,7 @@ public class ModReloadAssetReload {
                     PlayerUtil.sendPluginMessage(
                         playerRef,
                         Main.INSTANCE, 
-                        Message.raw("Received asset: " + path.toString() + " from mod " + pluginId.toString()).color(Colors.LIGHT_GRAY)
+                        Message.raw("Received asset: " + normalizedPath + " from mod " + pluginId.toString()).color(Colors.LIGHT_GRAY)
                     );
                 }
             }, world);
