@@ -57,7 +57,7 @@ public class Main extends SuperPlugin {
 
         // Load the configuration
         loadConfig();
-        
+
         // Initialize the tasks and load the configuration
         onConfigChanged();
 

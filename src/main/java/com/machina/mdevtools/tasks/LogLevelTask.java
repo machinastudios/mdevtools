@@ -1,6 +1,7 @@
 package com.machina.mdevtools.tasks;
 
 import java.lang.reflect.Field;
+import java.util.List;
 import java.util.Map;
 import java.util.logging.Level;
 
@@ -19,6 +20,15 @@ public class LogLevelTask extends Task {
      * The log level to set
      */
     private static String logLevel = "INFO";
+
+    /**
+     * The loggers to skip
+     * These are loggers that are too verbose and should not be set to the log level
+     */
+    private List<String> loggersToSkip = List.of(
+        "PacketLogging",
+        "WorldChunk"
+    );
 
     /**
      * The log level task
@@ -57,6 +67,11 @@ public class LogLevelTask extends Task {
 
             // Set the log level for all loggers
             for (HytaleLogger logger : cachedLoggers.values()) {
+                // Skip the logger if it is in the list of loggers to skip
+                if (loggersToSkip.contains(logger.getName())) {
+                    continue;
+                }
+
                 // Set the log level
                 logger.setLevel(newLevel);
             }
