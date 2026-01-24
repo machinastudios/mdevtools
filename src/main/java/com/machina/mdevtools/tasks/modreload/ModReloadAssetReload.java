@@ -164,7 +164,9 @@ public class ModReloadAssetReload {
 
                 // If player is OP
                 if (PlayerUtil.isOp(playerRef)) {
-                    playerRef.sendMessage(
+                    PlayerUtil.sendPluginMessage(
+                        playerRef,
+                        Main.INSTANCE,
                         Message.raw("Receiving asset: " + path.toString() + " from mod " + pluginId.toString()).color(Colors.LIGHT_GRAY)
                     );
                 }
@@ -208,7 +210,9 @@ public class ModReloadAssetReload {
 
                 // If player is OP
                 if (PlayerUtil.isOp(playerRef)) {
-                    playerRef.sendMessage(
+                    PlayerUtil.sendPluginMessage(
+                        playerRef,
+                        Main.INSTANCE, 
                         Message.raw("Received asset: " + path.toString() + " from mod " + pluginId.toString()).color(Colors.LIGHT_GRAY)
                     );
                 }
