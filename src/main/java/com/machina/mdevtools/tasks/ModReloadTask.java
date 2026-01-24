@@ -9,13 +9,15 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Predicate;
 
 import com.hypixel.hytale.common.plugin.PluginIdentifier;
-import com.hypixel.hytale.server.core.Options;
+import com.hypixel.hytale.server.core.HytaleServerConfig;
 import com.hypixel.hytale.server.core.plugin.JavaPlugin;
 import com.hypixel.hytale.server.core.plugin.PluginBase;
 import com.hypixel.hytale.server.core.plugin.PluginState;
 import com.machina.mdevtools.Main;
+import com.machina.mdevtools.tasks.modreload.ConfigFilesReload;
 import com.machina.mdevtools.tasks.modreload.ModReloadDependency;
 import com.machina.mdevtools.tasks.modreload.ModReloadDependencyManager;
 import com.machina.mdevtools.tasks.modreload.ModReloadExcludeChecker;
@@ -73,6 +75,11 @@ public class ModReloadTask extends Thread {
      * Set of paths currently being processed to prevent duplicate reloads
      */
     private Set<Path> processingPaths = new HashSet<>();
+
+    /**
+     * Set containing a list of predicates for changed files
+     */
+    private Set<Predicate<Path>> fileConsumers = new HashSet<>();
 
     /**
      * Delay in milliseconds before reloading a mod after it's detected
@@ -240,6 +247,9 @@ public class ModReloadTask extends Thread {
         // Load configuration values (will be set in first run() iteration if needed)
         this.reloadDelayMs = 1000; // Default value, will be overridden in run()
         this.fileStabilityCheckMs = 500; // Default value, will be overridden in run()
+
+        // Add default file consumers
+        fileConsumers.add(ConfigFilesReload::maybeReloadServerConfig);
     }
     
     /**
@@ -274,36 +284,13 @@ public class ModReloadTask extends Thread {
         initConfig();
 
         // Get the pathes to watch
-        List<Path> modsPath = List.of(
-            Path.of("mods"),
-            Path.of("builtin"),
-            Path.of("earlyplugins")
-        );
+        List<Path> modPaths = ModReloadPathUtils.getModPaths();
 
-        // Workaround for java.lang.UnsupportedOperationException (ImmutableCollections)
-        // List.of() returns an immutable list, so we must use a mutable list for addAll()
-        List<Path> mutableModsPath = new ArrayList<>(modsPath);
-
-        // Add the mods option
-        mutableModsPath.addAll(Options.MODS_DIRECTORIES.options().stream().map(Path::of).toList());
-
-        // Add the early plugin directories
-        mutableModsPath.addAll(Options.EARLY_PLUGIN_DIRECTORIES.options().stream().map(Path::of).toList());
-
-        // Add the configuration directories
-        mutableModsPath.addAll(Main.INSTANCE.config.getList("mods.reload.additionalDirectories", List.of()).stream()
-            .map(Object::toString)
-            .map(Path::of)
-            .toList());
-
-        modsPath = mutableModsPath;
-
-        // Deduplicate the list and make it unmodifiable
-        modsPath = modsPath.stream().distinct().toList();
-        final List<Path> finalModsPath = List.copyOf(modsPath);
+        // Add the config files path
+        modPaths.add(HytaleServerConfig.PATH);
 
         // Create the hybrid watcher
-        HybridWatcher hybridWatcher = new HybridWatcher(finalModsPath, Duration.ofMillis(300));
+        HybridWatcher hybridWatcher = new HybridWatcher(modPaths, Duration.ofMillis(300));
 
         while (running && !Thread.currentThread().isInterrupted()) {
             initConfig();
@@ -349,6 +336,20 @@ public class ModReloadTask extends Thread {
         for (HybridWatcher.Entry entry : uniqueEntries.values()) {
             Path normalizedPath = ModReloadPathUtils.normalizePath(entry.path());
 
+            // Try to handle the file with each consumer
+            for (Predicate<Path> fileConsumer : fileConsumers) {
+                // If the consumer accepts the file, stop trying other consumers
+                if (fileConsumer.test(normalizedPath)) {
+                    logger.debug("File %s accepted by consumer %s", normalizedPath.getFileName().toString(), fileConsumer.getClass().getName());
+                    continue;
+                }
+            }
+
+            /**
+             * Handle by default handler
+             */
+
+            // If it's not a mod file
             if (!ModReloadPathUtils.isModFile(normalizedPath)) {
                 logger.debug("File %s is not a mod, skipping", normalizedPath.getFileName().toString());
                 continue;

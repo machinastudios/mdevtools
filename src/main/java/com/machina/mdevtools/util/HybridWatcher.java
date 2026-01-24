@@ -1,9 +1,21 @@
 package com.machina.mdevtools.util;
 
 import java.io.IOException;
-import java.nio.file.*;
+import java.nio.file.FileSystems;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardWatchEventKinds;
+import java.nio.file.WatchEvent;
+import java.nio.file.WatchKey;
+import java.nio.file.WatchService;
 import java.time.Duration;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import com.machina.mdevtools.Main;
@@ -47,12 +59,13 @@ public class HybridWatcher {
 
     public HybridWatcher(List<Path> roots, Duration interval) {
         logger.debug("Initializing HybridWatcher with %d root(s) and interval: %s", roots.size(), interval);
+
         this.roots = roots;
         this.interval = interval;
 
         // Iterate over the roots and log them
         for (Path root : roots) {
-            logger.trace("Watching root: %s", root);
+            logger.debug("Watching %s", root);
         }
 
         initSnapshot();
@@ -73,17 +86,26 @@ public class HybridWatcher {
                 logger.trace("Skipping snapshot for root %s: directory does not exist", root);
                 continue;
             }
-            
-            try (var stream = Files.walk(root)) {
-                int fileCount = (int) stream.filter(Files::isRegularFile)
-                      .peek(f -> {
-                          lastModified.put(f, getModTime(f));
-                      })
-                      .count();
-                totalFiles += fileCount;
-                logger.trace("Snapshot initialized for root %s: %d files tracked", root, fileCount);
-            } catch (IOException e) {
-                logger.warn("Failed to initialize snapshot for root %s: %s", root, e.getMessage());
+
+            // If it's a directory
+            if (Files.isDirectory(root)) {            
+                try (var stream = Files.walk(root)) {
+                    int fileCount = (int) stream.filter(Files::isRegularFile)
+                        .peek(f -> {
+                            lastModified.put(f, getModTime(f));
+                        })
+                        .count();
+                    totalFiles += fileCount;
+                    logger.trace("Snapshot initialized for root %s: %d files tracked", root, fileCount);
+                } catch (IOException e) {
+                    logger.warn("Failed to initialize snapshot for root %s: %s", root, e.getMessage());
+                }
+            } else
+            // If it's a file
+            if (Files.isRegularFile(root)) {
+                lastModified.put(root, getModTime(root));
+                totalFiles++;
+                logger.trace("Snapshot initialized for root %s: %d files tracked", root, 1);
             }
         }
 
