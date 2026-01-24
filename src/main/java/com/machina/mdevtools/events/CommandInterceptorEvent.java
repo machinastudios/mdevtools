@@ -6,7 +6,7 @@ import com.hypixel.hytale.server.core.Message;
 import com.hypixel.hytale.server.core.plugin.PluginBase;
 import com.hypixel.hytale.server.core.plugin.PluginManager;
 import com.hypixel.hytale.server.core.universe.PlayerRef;
-import com.machina.mdevtools.tasks.ModReloadTask;
+import com.machina.mdevtools.tasks.modreload.ModReloadThread;
 import com.machina.shared.mechanics.PacketInterceptor.InterceptedPacketEvent;
 import com.machina.shared.util.PlayerUtil;
 
@@ -70,7 +70,7 @@ public class CommandInterceptorEvent {
                     }
 
                     // Add the plugin to the pending list
-                    ModReloadTask.addPendingPlugin(plugin.getIdentifier());
+                    ModReloadThread.addPendingPlugin(plugin.getIdentifier());
 
                     // Cancel the event
                     event.setCancelled(true);

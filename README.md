@@ -1,17 +1,18 @@
 # MDevTools - Development tools for Hytale servers and modders
 
-Development tools plugin for Hytale servers and modders that provides automated log cleanup and mod hot-reload capabilities.
+Development tools plugin for Hytale servers and modders that provides automated log cleanup, configurable global log level, and mod hot-reload capabilities.
 
 ## Features
 
 - **Log Cleanup**: Automatically removes old log files on startup, keeping only the most recent one
-- **Mod Hot-Reload**: Automatically reloads mods when files (`.jar` or `.zip`) are updated in the `mods` or `builtin` directories, without requiring a full server restart
-- **Auto-Load New Mods**: Automatically loads new mods when they are added to the `mods` or `builtin` directories, without requiring a full server restart
+- **Log Level**: Sets the global log level for all server loggers on startup (e.g. `INFO`, `DEBUG`, `WARNING`)
+- **Mod Hot-Reload**: Automatically reloads mods when files (`.jar` or `.zip`) are updated in the `mods`, `builtin`, or `earlyplugins` directories, without requiring a full server restart
+- **Auto-Load New Mods**: Automatically loads new mods when they are added to these directories, without requiring a full server restart
 - **Mod Exclusion**: Exclude specific mods from hot-reload using wildcard patterns (supports both mod IDs and file names)
 
 ### How Mod Hot-Reload Works
 
-The mod hot-reload feature monitors both the `mods` and `builtin` directories for changes to `.jar` or `.zip` files. It can both reload existing mods when they are updated and automatically load new mods when they are added to these directories. When a change is detected:
+The mod hot-reload feature monitors the `mods`, `builtin`, and `earlyplugins` directories (plus any `mods.reload.additionalDirectories`) for changes to `.jar` or `.zip` files. It can both reload existing mods when they are updated and automatically load new mods when they are added to these directories. When a change is detected:
 
 1. **File Stability Check**: Before attempting to load or reload, the system waits for the file to be completely written. This prevents attempting to load incomplete files during slow uploads or file copies:
    - Waits a configurable delay (`mods.reloadDelayMs`) after file detection
@@ -71,12 +72,11 @@ To handle slow uploads and file transfers gracefully, MDevTools implements a sma
 
 ## Installation
 
-1. Place the MDevTools JAR file in your server's `builtin` directory (not in the `mods` directory - this plugin must be explicitly placed in `builtin`)
-If you place it in the mods folder, things can get really wrong.
-2. Configure using `config.json5` as needed
-3. Restart the server
+1. Place the MDevTools JAR file in your server's `builtin` directory (not in the `mods` directory—this plugin must be explicitly placed in `builtin`). **If you place it in the mods folder, things can go wrong.**
+2. Configure using `config.json5` as needed.
+3. Restart the server.
 
-The plugin will automatically start monitoring for mod changes and clean up logs on startup.
+The plugin will automatically start monitoring for mod changes, clean up logs, and apply the configured log level on startup.
 
 ## Configuration
 
@@ -84,24 +84,27 @@ The plugin will automatically start monitoring for mod changes and clean up logs
 {
   "logs": {
     // Whether to cleanup logs and lock files on startup
-    "cleanupOnStartup": true
+    "cleanupOnStartup": true,
+    "global": {
+      // Global log level for all server loggers (e.g. INFO, DEBUG, WARNING, SEVERE)
+      // Default: "INFO"
+      "level": "INFO"
+    }
   },
   "mods": {
-    // Whether to hot reload mods when they are updated
-    "restartServerWhenUpdated": true,
     // Delay in milliseconds before reloading a mod after it's detected (to ensure file is fully written)
-    // Default: 1000ms (1 second)
+    // Default: 1000
     "reloadDelayMs": 1000,
     // Time in milliseconds to wait checking if file size is stable before reloading
-    // Default: 500ms (0.5 seconds)
+    // Default: 500
     "fileStabilityCheckMs": 500,
-    // Whether to unload a mod when it's deleted from the filesystem
-    // Default: false
-    "unloadWhenDeleted": false,
     "reload": {
+      // Whether to enable mod hot-reload
+      // Default: true
+      "enabled": true,
       // Additional directories to watch for mod updates (beyond mods/, builtin/, earlyplugins/)
       // Default: []
-      "include": [],
+      "additionalDirectories": [],
       // Mods to exclude from hot-reload (supports wildcards: * and ?)
       // Matches against both mod IDs (group:id) and file names
       // Default: []
@@ -109,18 +112,25 @@ The plugin will automatically start monitoring for mod changes and clean up logs
         "com.example:core",
         "*:system",
         "test*.jar"
-      ]
+      ],
+      // Whether to unload a mod when it's deleted from the filesystem
+      // Default: false
+      "unloadWhenDeleted": false
     }
   }
 }
 ```
 
 **Configuration Notes:**
-- `reloadDelayMs`: The initial delay after a file change is detected before starting the stability check. Increase this if you experience issues with files being detected too early (e.g., during slow uploads).
-- `fileStabilityCheckMs`: The duration to monitor file size stability. The file must not change size during this period to be considered stable. Increase this if files are being loaded while still being written.
-- `unloadWhenDeleted`: When enabled, mods will be automatically unloaded when their JAR/ZIP file is deleted from the filesystem. Use with caution as this can cause issues if mods are temporarily moved or renamed.
-- `reload.additionalDirectories`: Additional directories to monitor for mod changes. By default, the system watches `mods/`, `builtin/`, and `earlyplugins/` directories. Use this to add custom mod directories.
-- `reload.exclude`: List of patterns to exclude mods from hot-reload. Supports wildcards (`*` for any characters, `?` for single character) and matches against both mod IDs (format: `group:id`) and file names. Patterns are cached for optimal performance.
+
+- **`logs.cleanupOnStartup`**: When `true`, old log and lock files are removed on startup, keeping only the most recent one.
+- **`logs.global.level`**: Java `Level` name (e.g. `INFO`, `DEBUG`, `WARNING`, `SEVERE`) applied to all server loggers on startup.
+- **`mods.reloadDelayMs`**: Initial delay after a file change is detected before starting the stability check. Increase if files are detected too early (e.g. during slow uploads).
+- **`mods.fileStabilityCheckMs`**: Duration to verify file size stability. The file must not change size during this period. Increase if mods are loaded while still being written.
+- **`mods.reload.enabled`**: When `false`, disables mod hot-reload entirely.
+- **`mods.reload.additionalDirectories`**: Extra directories to watch for mod changes. Default watched paths are `mods/`, `builtin/`, and `earlyplugins/`.
+- **`mods.reload.exclude`**: Wildcard patterns (`*`, `?`) to exclude mods from hot-reload. Matches mod IDs (`group:id`) and file names. Patterns are cached.
+- **`mods.reload.unloadWhenDeleted`**: When `true`, mods are unloaded when their JAR/ZIP is deleted. Use with caution (e.g. avoid moving/renaming mods temporarily).
 
 ## Community
 

@@ -9,7 +9,6 @@ import com.hypixel.hytale.server.core.plugin.JavaPlugin;
 import com.hypixel.hytale.server.core.plugin.PluginManager;
 import com.hypixel.hytale.server.core.plugin.PluginState;
 import com.machina.mdevtools.Main;
-import com.machina.mdevtools.tasks.ModReloadTask;
 import com.machina.mdevtools.util.HybridWatcher;
 import com.machina.shared.factory.ModLogger;
 import com.machina.shared.util.ModJarUtils;
@@ -89,7 +88,7 @@ public final class ModReloadFileHandler {
             // Get the plugin map and setup dependencies
             Map<PluginIdentifier, JavaPlugin> hytalePluginList = pluginManager.getPluginMap();
             dependencyManager.setupDependencies(manifest, reloadState, hytalePluginList, pluginName);
-            ModReloadTask.setDependenciesState(modId, PluginState.SETUP);
+            ModReloadThread.setDependenciesState(modId, PluginState.SETUP);
 
             // Get the existing plugin
             PluginIdentifier pluginId = PluginIdentifier.fromString(pluginName);
@@ -151,7 +150,7 @@ public final class ModReloadFileHandler {
      */
     public ModReloadResult onModFileDeleted(Path filePath, String fileName) {
         // If doesn't support deletion, return success
-        if (!Main.INSTANCE.config.getBoolean("mods.unloadWhenDeleted", false)) {
+        if (!Main.INSTANCE.config.getBoolean("mods.reload.unloadWhenDeleted", false)) {
             logger.warn("Mod %s was deleted, but unloading is not supported, skipping", fileName);
             return ModReloadResult.success();
         }
