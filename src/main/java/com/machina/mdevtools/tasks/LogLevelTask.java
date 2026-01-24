@@ -25,10 +25,7 @@ public class LogLevelTask extends Task {
      * The loggers to skip
      * These are loggers that are too verbose and should not be set to the log level
      */
-    private List<String> loggersToSkip = List.of(
-        "PacketLogging",
-        "WorldChunk"
-    );
+    private List<String> loggersToSkip;
 
     /**
      * The log level task
@@ -44,6 +41,9 @@ public class LogLevelTask extends Task {
    public void start() {
         // Get the log level from the configuration
         String logLevel = Main.INSTANCE.config.getString("logs.global.level", "INFO");
+
+        // Get the loggers to skip from the configuration
+        loggersToSkip = Main.INSTANCE.config.getStringList("logs.global.skip", List.of());
 
         // Parse the log level
         Level newLevel;
