@@ -56,7 +56,7 @@ This prevents reloading during partial uploads, IDE builds or slow network trans
 
 ## Installation
 
-1. Place the MDevTools JAR in the server's `builtin` directory
+1. Place the MDevTools JAR in the server's `mods` directory
 2. Configure `config.json5` as needed
 3. Restart the server
 
