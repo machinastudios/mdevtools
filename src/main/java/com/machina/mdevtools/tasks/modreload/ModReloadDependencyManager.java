@@ -71,6 +71,28 @@ public final class ModReloadDependencyManager {
     }
 
     /**
+     * Setup sub plugins for a mod reload
+     * @param manifest The mod manifest
+     * @param reloadState The reload state to populate
+     * @param hytalePluginList The plugin map
+     * @param pluginName The plugin name for logging
+     */
+    public void setupSubPlugins(
+        ModJarUtils.ModManifest manifest,
+        ModReloadState reloadState,
+        Map<PluginIdentifier, JavaPlugin> hytalePluginList,
+        String pluginName
+    ) throws Exception {
+        // Get the sub plugins names list
+        var subPlugins = manifest.getSubPlugins();
+
+        // Iterate over the sub plugins
+        for (String subPlugin : subPlugins) {
+            // @todo load the sub plugin?
+        }
+    }
+
+    /**
      * Restore dependencies to their original state
      * @param reloadState The reload state containing dependencies
      * @param hytalePluginList The plugin map

@@ -1,4 +1,4 @@
-package com.machina.mdevtools.tasks.modreload;
+package com.machina.mdevtools.tasks.modreload.consumers;
 
 import java.lang.reflect.Field;
 import java.nio.file.Path;

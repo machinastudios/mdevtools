@@ -88,6 +88,7 @@ public final class ModReloadFileHandler {
             // Get the plugin map and setup dependencies
             Map<PluginIdentifier, JavaPlugin> hytalePluginList = pluginManager.getPluginMap();
             dependencyManager.setupDependencies(manifest, reloadState, hytalePluginList, pluginName);
+            dependencyManager.setupSubPlugins(manifest, reloadState, hytalePluginList, pluginName);
             ModReloadThread.setDependenciesState(modId, PluginState.SETUP);
 
             // Get the existing plugin

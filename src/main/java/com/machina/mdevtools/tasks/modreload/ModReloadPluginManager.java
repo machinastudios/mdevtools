@@ -8,6 +8,7 @@ import com.hypixel.hytale.common.plugin.PluginIdentifier;
 import com.hypixel.hytale.server.core.asset.AssetModule;
 import com.hypixel.hytale.server.core.plugin.JavaPlugin;
 import com.hypixel.hytale.server.core.plugin.PluginManager;
+import com.machina.mdevtools.tasks.modreload.util.ModReloadPathUtils;
 import com.machina.shared.factory.ModLogger;
 import com.machina.shared.util.ModJarUtils;
 

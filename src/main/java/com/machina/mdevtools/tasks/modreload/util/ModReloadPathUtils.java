@@ -1,4 +1,4 @@
-package com.machina.mdevtools.tasks.modreload;
+package com.machina.mdevtools.tasks.modreload.util;
 
 import java.io.IOException;
 import java.nio.file.Files;
