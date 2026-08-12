@@ -1,96 +1,75 @@
-# MDevTools - Development tools for Hytale servers and modders
+<div align="center">
 
-MDevTools is a development toolkit for Hytale servers and modders that streamlines iteration by automatically cleaning up logs, adjusting global log levels and enabling hot-reload of mods during development without requiring a full server restart.
+# MDevTools
+
+> Development toolkit for Hytale mod authors
+
+**Log cleanup, global log levels, and hot-reload of mods without full server restarts.**
+
+[![Java](https://img.shields.io/badge/Language-Java-orange.svg)](#)
+[![Hytale](https://img.shields.io/badge/Platform-Hytale-purple.svg)](#)
+
+[Overview](#overview) • [Features](#features) • [Configuration](#configuration) • [Installation](#installation)
+
+</div>
+
+---
 
 ## Overview
 
-MDevTools improves the development workflow for Hytale mod authors by watching key plugin directories and reloading or loading mods when changes are detected. This removes the need to restart the server each time a JAR or ZIP is updated, significantly improving iteration speed.
+MDevTools streamlines Hytale mod development by watching `mods`, `builtin`, and `earlyplugins` (plus optional extra paths) and reloading JAR/ZIP files when they change. It also cleans old logs on startup and can set a global log level for all server loggers.
 
-It also manages log cleanup to prevent workspace clutter and can set a global log level so that debugging or verbose output can be tuned per session.
+Hybrid file monitoring combines Java `WatchService` with polling fallback for Docker, VMs, and network filesystems.
 
-## Key Features
+---
 
-* Log cleanup on startup to prevent clutter 🧹
-* Global log level configuration for all server loggers 🎛️
-* Automatic hot-reload of modified mods during development ♻️
-* Automatic loading of new mods dropped into watched directories 📦
-* Exclusion patterns to avoid reloading critical or slow mods 🚫
-* Hybrid file watching with polling fallback for container environments 🐳
-* Smart file stability detection for slow uploads or transfers ⏱️
+## Features
 
-## Hot-Reload Behavior
+- Log cleanup on startup.
+- Global log level configuration with per-logger skip list.
+- Automatic hot-reload of modified mods.
+- Automatic loading of new mods dropped into watched directories.
+- Exclusion patterns for mods that must not reload.
+- File stability detection before reload (avoids half-written uploads).
+- Polling fallback for container and NFS/CIFS mounts.
 
-When a JAR or ZIP changes in the `mods`, `builtin` or `earlyplugins` directories (or any additional watched paths), MDevTools will schedule a reload and first ensure the file is fully written. This prevents corruption or half-written file loads during SCP uploads, Docker binds or IDE deployments.
+### Hot-reload behavior
 
-Hot-reload supports both loading new mods and reloading existing ones depending on whether a plugin with the same ID is already active.
+When a file changes, MDevTools waits until size is stable, then reloads or loads the mod depending on whether the plugin ID is already active.
 
-## Supported Use Cases
+Ideal for rapid iteration, CI artifact drops, and remote Docker development.
 
-Hot-reload is ideal for:
-
-* Rapid iteration during development 🚀
-* Testing mod interactions without server restarts 🧩
-* CI pipelines that deploy updated plugin artifacts automatically 🏗️
-* Remote development environments running in Docker or VM containers 🌐
-
-## Hybrid File Monitoring
-
-MDevTools combines Java's WatchService for event-driven notifications with a polling fallback for container and network environments where inotify or filesystem events do not propagate correctly.
-
-This ensures file change detection remains reliable in:
-
-* Docker and container setups 🐳
-* Virtual machines 🖥️
-* Network file systems (NFS / CIFS) 🌐
-* Development volume mounts 🔁
-
-## File Stability Detection
-
-To ensure files are completely written before reloading mods, MDevTools applies:
-
-* A configurable delay after first detection
-* A file size stability window
-* Automatic reset of timers when new write events occur
-
-This prevents reloading during partial uploads, IDE builds or slow network transfers.
-
-## Installation
-
-1. Place the MDevTools JAR in the server's `mods` directory
-2. Configure `config.json5` as needed
-3. Restart the server
-
-MDevTools will begin monitoring and apply log cleanup and log level adjustments at startup.
+---
 
 ## Configuration
 
-Configuration for MDevTools lives in:
+Paths:
 
-* `config/com.machina/mdevtools` (preferred and used when writable)
-* fallback: `mods/com.machina/mdevtools` (when the primary path cannot be written)
+- `config/com.machina/mdevtools` (preferred)
+- fallback: `mods/com.machina/mdevtools`
 
-All configuration is in **JSON5** format for easier editing (comments allowed, trailing commas allowed).
+JSON5 format (comments and trailing commas allowed).
 
-### Log Settings
+### Log settings
 
-Log settings control both cleanup and global verbosity:
+| Key | Purpose |
+| --- | ------- |
+| `logs.cleanupOnStartup.enabled` | Remove old log/lock files on startup |
+| `logs.global.level` | Global level (`INFO`, `DEBUG`, `WARNING`, ...) |
+| `logs.global.skip` | Logger names to skip when applying global level |
 
-* `logs.cleanupOnStartup.enabled`: removes old log and lock files on startup (keeps workspace clean)
-* `logs.global.level`: sets the global log level for all server loggers (e.g. `INFO`, `DEBUG`, `WARNING`)
-* `logs.global.skip`: skip specific noisy loggers when applying the global level (e.g. packet/world spam)
+### Mod reload settings
 
-### Mod Reload Settings
+| Key | Purpose |
+| --- | ------- |
+| `mods.reload.enabled` | Master hot-reload switch |
+| `mods.reload.delayMs` | Delay before stability check |
+| `mods.reload.fileStabilityCheckMs` | Time file size must stay stable |
+| `mods.reload.additionalDirectories` | Extra directories to watch |
+| `mods.reload.exclude` | Wildcard patterns (mod IDs and filenames) |
+| `mods.reload.unloadWhenDeleted` | Unload mod when file is deleted |
 
-Reload settings control hot-reload behavior for mod files:
-
-* `mods.reload.enabled`: master switch for hot-reload
-* `mods.reload.delayMs`: delay before checking stability (helps with slow writes)
-* `mods.reload.fileStabilityCheckMs`: duration the file must remain size-stable before reload
-* `mods.reload.additionalDirectories`: optional extra directories to watch
-* `mods.reload.exclude`: wildcard patterns to exclude mods (matches mod IDs and filenames)
-* `mods.reload.unloadWhenDeleted`: unload a mod if its file is deleted
-
-Example configuration:
+Example:
 
 ```json5
 {
@@ -114,20 +93,23 @@ Example configuration:
 }
 ```
 
-## Support Development
+---
 
-You can support development here 💖 to help fuel future updates and features:
+## Installation
 
-[https://machinastudios.net/support-us](https://machinastudios.net/support-us)
+1. Place the MDevTools JAR in the server's `mods` directory.
+2. Configure `config.json5` as needed.
+3. Restart the server.
+
+---
 
 ## Community
 
-💬 **Join our Discord community!**
+- Support: [machinastudios.net/support-us](https://machinastudios.net/support-us)
+- Discord: [discord.gg/QAFrzj48EN](https://discord.gg/QAFrzj48EN)
 
-Get help, share ideas, and connect with other developers 🧑‍💻:
+---
 
-* 🆘 Support and troubleshooting
-* 💡 Suggestions and feedback
-* 🤝 Community and collaboration
+## License
 
-👉 **Join our Discord Server**: [https://discord.gg/QAFrzj48EN](https://discord.gg/QAFrzj48EN)
+Part of the Machina plugin ecosystem for Hytale.
